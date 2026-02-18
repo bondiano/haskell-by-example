@@ -1,0 +1,38 @@
+name: chapter17
+version: 0.1.0.0
+synopsis: "Haskell by Example — Глава 17: Линзы и оптики"
+license: MIT
+
+default-extensions:
+  - OverloadedStrings
+  - DeriveGeneric
+  - DerivingStrategies
+  - GeneralizedNewtypeDeriving
+  - DeriveFunctor
+  - DeriveFoldable
+  - DeriveTraversable
+  - LambdaCase
+  - ScopedTypeVariables
+  - TypeApplications
+  - NamedFieldPuns
+  - RecordWildCards
+  - TupleSections
+  - NumericUnderscores
+  - ImportQualifiedPost
+  - TemplateHaskell
+  - RankNTypes
+
+dependencies:
+  - base >= 4.18 && < 5
+  - lens
+
+library:
+  source-dirs: src
+
+tests:
+  chapter17-tests:
+    main: Spec.hs
+    source-dirs: test
+    dependencies:
+      - chapter17
+      - hspec

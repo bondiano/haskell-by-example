@@ -1,0 +1,41 @@
+name: chapter15
+version: 0.1.0.0
+synopsis: "Haskell by Example — Глава 15: Предметно-ориентированные языки"
+license: MIT
+
+default-extensions:
+  - OverloadedStrings
+  - DeriveGeneric
+  - DerivingStrategies
+  - GeneralizedNewtypeDeriving
+  - DeriveFunctor
+  - DeriveFoldable
+  - DeriveTraversable
+  - LambdaCase
+  - ScopedTypeVariables
+  - TypeApplications
+  - NamedFieldPuns
+  - RecordWildCards
+  - TupleSections
+  - NumericUnderscores
+  - ImportQualifiedPost
+
+dependencies:
+  - base >= 4.18 && < 5
+
+library:
+  source-dirs: src
+  dependencies:
+    - megaparsec
+    - parser-combinators
+    - containers
+
+tests:
+  chapter15-tests:
+    main: Spec.hs
+    source-dirs: test
+    dependencies:
+      - chapter15
+      - hspec
+      - megaparsec
+      - containers

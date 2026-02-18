@@ -1,0 +1,74 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.38.1.
+--
+-- see: https://github.com/sol/hpack
+
+name:           chapter17
+version:        0.1.0.0
+synopsis:       Haskell by Example — Глава 17: Линзы и оптики
+license:        MIT
+build-type:     Simple
+
+library
+  exposed-modules:
+      Data.Company
+  other-modules:
+      Paths_chapter17
+  hs-source-dirs:
+      src
+  default-extensions:
+      OverloadedStrings
+      DeriveGeneric
+      DerivingStrategies
+      GeneralizedNewtypeDeriving
+      DeriveFunctor
+      DeriveFoldable
+      DeriveTraversable
+      LambdaCase
+      ScopedTypeVariables
+      TypeApplications
+      NamedFieldPuns
+      RecordWildCards
+      TupleSections
+      NumericUnderscores
+      ImportQualifiedPost
+      TemplateHaskell
+      RankNTypes
+  build-depends:
+      base >=4.18 && <5
+    , lens
+  default-language: Haskell2010
+
+test-suite chapter17-tests
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      MySolutions
+      Paths_chapter17
+  hs-source-dirs:
+      test
+  default-extensions:
+      OverloadedStrings
+      DeriveGeneric
+      DerivingStrategies
+      GeneralizedNewtypeDeriving
+      DeriveFunctor
+      DeriveFoldable
+      DeriveTraversable
+      LambdaCase
+      ScopedTypeVariables
+      TypeApplications
+      NamedFieldPuns
+      RecordWildCards
+      TupleSections
+      NumericUnderscores
+      ImportQualifiedPost
+      TemplateHaskell
+      RankNTypes
+  build-depends:
+      base >=4.18 && <5
+    , chapter17
+    , hspec
+    , lens
+  default-language: Haskell2010

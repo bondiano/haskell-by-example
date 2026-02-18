@@ -1,0 +1,43 @@
+name: chapter18
+version: 0.1.0.0
+synopsis: "Haskell by Example — Глава 18: Веб-приложение с базой данных"
+license: MIT
+
+default-extensions:
+  - OverloadedStrings
+  - DeriveGeneric
+  - DerivingStrategies
+  - GeneralizedNewtypeDeriving
+  - ScopedTypeVariables
+  - TypeApplications
+  - ImportQualifiedPost
+  - TemplateHaskell
+  - QuasiQuotes
+  - TypeFamilies
+  - StandaloneDeriving
+  - UndecidableInstances
+  - DataKinds
+  - FlexibleInstances
+  - MultiParamTypeClasses
+  - GADTs
+  - FlexibleContexts
+
+dependencies:
+  - base >= 4.18 && < 5
+  - text
+  - persistent
+  - persistent-sqlite
+
+library:
+  source-dirs: src
+  dependencies:
+    - monad-logger
+
+tests:
+  chapter18-tests:
+    main: Spec.hs
+    source-dirs: test
+    dependencies:
+      - chapter18
+      - hspec
+      - persistent

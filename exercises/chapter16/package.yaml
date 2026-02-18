@@ -1,0 +1,47 @@
+name: chapter16
+version: 0.1.0.0
+synopsis: "Haskell by Example — Глава 16: GADTs и семейства типов"
+license: MIT
+
+default-extensions:
+  - OverloadedStrings
+  - DeriveGeneric
+  - DerivingStrategies
+  - GeneralizedNewtypeDeriving
+  - DeriveFunctor
+  - DeriveFoldable
+  - DeriveTraversable
+  - LambdaCase
+  - ScopedTypeVariables
+  - TypeApplications
+  - NamedFieldPuns
+  - RecordWildCards
+  - TupleSections
+  - NumericUnderscores
+  - ImportQualifiedPost
+  - GADTs
+  - DataKinds
+  - TypeFamilies
+  - KindSignatures
+  - StandaloneDeriving
+  - RankNTypes
+  - TypeOperators
+  - UndecidableInstances
+  - FlexibleInstances
+  - FlexibleContexts
+
+dependencies:
+  - base >= 4.18 && < 5
+  - containers
+
+library:
+  source-dirs: src
+
+tests:
+  chapter16-tests:
+    main: Spec.hs
+    source-dirs: test
+    dependencies:
+      - chapter16
+      - hspec
+      - containers

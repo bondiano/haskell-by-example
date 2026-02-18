@@ -1,0 +1,20 @@
+resolver: lts-22.43
+
+packages:
+  - exercises/chapter02
+  - exercises/chapter03
+  - exercises/chapter04
+  - exercises/chapter05
+  - exercises/chapter06
+  - exercises/chapter07
+  - exercises/chapter08
+  - exercises/chapter09
+  - exercises/chapter10
+  - exercises/chapter11
+  - exercises/chapter12
+  - exercises/chapter13
+  - exercises/chapter14
+  - exercises/chapter15
+  - exercises/chapter16
+  - exercises/chapter17
+  - exercises/chapter18

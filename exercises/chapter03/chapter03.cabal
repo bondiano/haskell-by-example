@@ -1,0 +1,68 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.38.1.
+--
+-- see: https://github.com/sol/hpack
+
+name:           chapter03
+version:        0.1.0.0
+synopsis:       Haskell by Example — Глава 3: Функции и записи
+license:        MIT
+build-type:     Simple
+
+library
+  exposed-modules:
+      Data.AddressBook
+  other-modules:
+      Paths_chapter03
+  hs-source-dirs:
+      src
+  default-extensions:
+      OverloadedStrings
+      DeriveGeneric
+      DerivingStrategies
+      GeneralizedNewtypeDeriving
+      DeriveFunctor
+      DeriveFoldable
+      DeriveTraversable
+      LambdaCase
+      ScopedTypeVariables
+      TypeApplications
+      NamedFieldPuns
+      RecordWildCards
+      TupleSections
+      NumericUnderscores
+      ImportQualifiedPost
+  build-depends:
+      base >=4.18 && <5
+  default-language: Haskell2010
+
+test-suite chapter03-tests
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      MySolutions
+      Paths_chapter03
+  hs-source-dirs:
+      test
+  default-extensions:
+      OverloadedStrings
+      DeriveGeneric
+      DerivingStrategies
+      GeneralizedNewtypeDeriving
+      DeriveFunctor
+      DeriveFoldable
+      DeriveTraversable
+      LambdaCase
+      ScopedTypeVariables
+      TypeApplications
+      NamedFieldPuns
+      RecordWildCards
+      TupleSections
+      NumericUnderscores
+      ImportQualifiedPost
+  build-depends:
+      base >=4.18 && <5
+    , chapter03
+    , hspec
+  default-language: Haskell2010

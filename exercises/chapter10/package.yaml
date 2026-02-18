@@ -1,0 +1,39 @@
+name: chapter10
+version: 0.1.0.0
+synopsis: "Haskell by Example — Глава 10: Асинхронные эффекты"
+license: MIT
+
+default-extensions:
+  - OverloadedStrings
+  - DeriveGeneric
+  - DerivingStrategies
+  - GeneralizedNewtypeDeriving
+  - DeriveFunctor
+  - DeriveFoldable
+  - DeriveTraversable
+  - LambdaCase
+  - ScopedTypeVariables
+  - TypeApplications
+  - NamedFieldPuns
+  - RecordWildCards
+  - TupleSections
+  - NumericUnderscores
+  - ImportQualifiedPost
+
+dependencies:
+  - base >= 4.18 && < 5
+  - async
+  - stm
+  - time
+
+library:
+  source-dirs: src
+
+tests:
+  chapter10-tests:
+    main: Spec.hs
+    source-dirs: test
+    dependencies:
+      - chapter10
+      - hspec
+      - directory

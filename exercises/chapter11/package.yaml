@@ -1,0 +1,39 @@
+name: chapter11
+version: 0.1.0.0
+synopsis: "Haskell by Example — Глава 11: Интерфейс внешних функций (FFI)"
+license: MIT
+
+default-extensions:
+  - OverloadedStrings
+  - DeriveGeneric
+  - DerivingStrategies
+  - GeneralizedNewtypeDeriving
+  - DeriveFunctor
+  - DeriveFoldable
+  - DeriveTraversable
+  - LambdaCase
+  - ScopedTypeVariables
+  - TypeApplications
+  - NamedFieldPuns
+  - RecordWildCards
+  - TupleSections
+  - NumericUnderscores
+  - ImportQualifiedPost
+
+dependencies:
+  - base >= 4.18 && < 5
+  - aeson
+  - bytestring
+  - text
+
+library:
+  source-dirs: src
+
+tests:
+  chapter11-tests:
+    main: Spec.hs
+    source-dirs: test
+    dependencies:
+      - chapter11
+      - hspec
+      - directory

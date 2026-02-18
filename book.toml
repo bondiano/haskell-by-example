@@ -1,0 +1,8 @@
+[book]
+title = "Haskell by Example"
+language = "ru"
+authors = ["Haskell by Example contributors"]
+src = "text"
+
+[build]
+build-dir = "output"

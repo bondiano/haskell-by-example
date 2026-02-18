@@ -1,0 +1,35 @@
+name: chapter04
+version: 0.1.0.0
+synopsis: "Haskell by Example — Глава 4: Сопоставление с образцом"
+license: MIT
+
+default-extensions:
+  - OverloadedStrings
+  - DeriveGeneric
+  - DerivingStrategies
+  - GeneralizedNewtypeDeriving
+  - DeriveFunctor
+  - DeriveFoldable
+  - DeriveTraversable
+  - LambdaCase
+  - ScopedTypeVariables
+  - TypeApplications
+  - NamedFieldPuns
+  - RecordWildCards
+  - TupleSections
+  - NumericUnderscores
+  - ImportQualifiedPost
+
+dependencies:
+  - base >= 4.18 && < 5
+
+library:
+  source-dirs: src
+
+tests:
+  chapter04-tests:
+    main: Spec.hs
+    source-dirs: test
+    dependencies:
+      - chapter04
+      - hspec

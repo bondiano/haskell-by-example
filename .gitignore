@@ -1,0 +1,16 @@
+# Stack
+.stack-work/
+
+# Cabal
+dist-newstyle/
+*.hi
+*.o
+*.dyn_hi
+*.dyn_o
+
+# mdBook output
+output/
+
+# OS
+.DS_Store
+Thumbs.db

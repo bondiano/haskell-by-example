@@ -1,0 +1,40 @@
+name: chapter08
+version: 0.1.0.0
+synopsis: "Haskell by Example — Глава 8: Монады"
+license: MIT
+
+default-extensions:
+  - OverloadedStrings
+  - DeriveGeneric
+  - DerivingStrategies
+  - GeneralizedNewtypeDeriving
+  - DeriveFunctor
+  - DeriveFoldable
+  - DeriveTraversable
+  - LambdaCase
+  - ScopedTypeVariables
+  - TypeApplications
+  - NamedFieldPuns
+  - RecordWildCards
+  - TupleSections
+  - NumericUnderscores
+  - ImportQualifiedPost
+
+dependencies:
+  - base >= 4.18 && < 5
+
+library:
+  source-dirs: src
+  dependencies:
+    - containers
+    - mtl
+
+tests:
+  chapter08-tests:
+    main: Spec.hs
+    source-dirs: test
+    dependencies:
+      - chapter08
+      - hspec
+      - containers
+      - mtl
