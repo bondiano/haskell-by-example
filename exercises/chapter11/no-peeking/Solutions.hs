@@ -1,85 +1,91 @@
 module Solutions where
 
-import Data.Aeson
-import Data.ByteString.Lazy (ByteString)
-import qualified Data.ByteString.Lazy as BL
-import qualified Data.Text as T
-import Contact (Contact(..))
+import Data.Text (Text)
+import Data.Text qualified as T
 
--- Упражнение 1: кодирование и декодирование JSON
+import TaskTracker
 
-encodeContacts :: [Contact] -> ByteString
-encodeContacts = encode
+-- ============================================================
+-- Упражнение 3: Тип Validation и инстансы
+-- ============================================================
 
-decodeContacts :: ByteString -> Maybe [Contact]
-decodeContacts = decode
+data Validation e a = Failure e | Success a
+  deriving (Show, Eq)
 
--- Упражнение 2: ручные экземпляры ToJSON / FromJSON
+instance Functor (Validation e) where
+  fmap _ (Failure e) = Failure e
+  fmap f (Success a) = Success (f a)
 
-data Movie = Movie
-  { movieTitle  :: String
-  , movieYear   :: Int
-  , movieRating :: Double
-  } deriving stock (Show, Eq)
+instance (Semigroup e) => Applicative (Validation e) where
+  pure = Success
+  Failure e1 <*> Failure e2 = Failure (e1 <> e2)
+  Failure e <*> _ = Failure e
+  _ <*> Failure e = Failure e
+  Success f <*> Success a = Success (f a)
 
-instance ToJSON Movie where
-  toJSON Movie{..} = object
-    [ "title"  .= movieTitle
-    , "year"   .= movieYear
-    , "rating" .= movieRating
-    ]
+-- ============================================================
+-- Упражнение 1: Валидация заголовка
+-- ============================================================
 
-instance FromJSON Movie where
-  parseJSON = withObject "Movie" $ \o -> Movie
-    <$> o .: "title"
-    <*> o .: "year"
-    <*> o .: "rating"
+-- | Заголовок не может быть пустым и не длиннее 100 символов.
+validateTitle :: Text -> Validation [Text] Text
+validateTitle title
+  | T.null title = Failure ["Заголовок не может быть пустым"]
+  | T.length title > 100 = Failure ["Заголовок не может быть длиннее 100 символов"]
+  | otherwise = Success title
 
-encodeMovie :: Movie -> ByteString
-encodeMovie = encode
+-- ============================================================
+-- Упражнение 2: Валидация приоритета
+-- ============================================================
 
-decodeMovie :: ByteString -> Maybe Movie
-decodeMovie = decode
+-- | Регистронезависимый парсинг приоритета.
+validatePriority :: Text -> Validation [Text] Priority
+validatePriority t =
+  case T.toLower t of
+    "low" -> Success Low
+    "medium" -> Success Medium
+    "high" -> Success High
+    _ -> Failure ["Неизвестный приоритет: " <> t]
 
--- Упражнение 3: JSON-файлы
+-- ============================================================
+-- Упражнение 3 (продолжение): validateTaskInput
+-- ============================================================
 
-saveJSON :: ToJSON a => FilePath -> a -> IO ()
-saveJSON path value = BL.writeFile path (encode value)
+{- | Сборка Task из трёх текстовых полей через Applicative.
+Ошибки из заголовка и приоритета объединяются.
+-}
+validateTaskInput :: Text -> Text -> Text -> Validation [Text] Task
+validateTaskInput title description priority =
+  Task
+    <$> validateTitle title
+    <*> pure description
+    <*> validatePriority priority
+    <*> pure Todo
 
-loadJSON :: FromJSON a => FilePath -> IO (Either String a)
-loadJSON path = eitherDecode <$> BL.readFile path
+-- ============================================================
+-- Упражнение 4: Labelled Functor
+-- ============================================================
 
--- Упражнение 4: опциональные поля и значения по умолчанию
+data Labelled a = Labelled String a
+  deriving (Show, Eq)
 
-data Config = Config
-  { configHost    :: String
-  , configPort    :: Int
-  , configDebug   :: Bool
-  , configLogFile :: Maybe String
-  } deriving stock (Show, Eq)
+instance Functor Labelled where
+  fmap f (Labelled label a) = Labelled label (f a)
 
-instance ToJSON Config where
-  toJSON Config{..} = object
-    [ "host"     .= configHost
-    , "port"     .= configPort
-    , "debug"    .= configDebug
-    , "log_file" .= configLogFile
-    ]
+-- ============================================================
+-- Упражнение 5: RoseTree Functor
+-- ============================================================
 
-instance FromJSON Config where
-  parseJSON = withObject "Config" $ \o -> Config
-    <$> o .:  "host"
-    <*> o .:  "port"
-    <*> o .:? "debug"    .!= False
-    <*> o .:? "log_file"
+data RoseTree a = RoseNode a [RoseTree a]
+  deriving (Show, Eq)
 
-encodeConfig :: Config -> ByteString
-encodeConfig = encode
+instance Functor RoseTree where
+  fmap f (RoseNode a children) = RoseNode (f a) (map (fmap f) children)
 
-decodeConfig :: ByteString -> Maybe Config
-decodeConfig = decode
+-- ============================================================
+-- Упражнение 6: Labelled Applicative
+-- ============================================================
 
--- Упражнение 5: нормализация текста
-
-normalizeText :: T.Text -> T.Text
-normalizeText = T.unwords . T.words . T.toLower
+instance Applicative Labelled where
+  pure = Labelled ""
+  Labelled l1 f <*> Labelled l2 x = Labelled (l1 <> l2) (f x)

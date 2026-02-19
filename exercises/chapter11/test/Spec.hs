@@ -1,127 +1,171 @@
+{-# HLINT ignore "Functor law" #-}
 module Main where
 
+import Data.Text (Text)
+import Data.Text qualified as T
 import Test.Hspec
-import Data.Aeson (decode, encode, object, (.=), Value(..))
-import Data.ByteString.Lazy (ByteString)
-import qualified Data.Text as T
-import System.Directory (removeFile, getTemporaryDirectory)
-import Contact
-import FFIExample qualified
+
 import MySolutions
+import TaskTracker
 
 main :: IO ()
 main = hspec $ do
-  describe "FFIExample (предоставлено)" $ do
-    it "cAbs вычисляет абсолютное значение" $ do
-      FFIExample.cAbs (-42) `shouldBe` 42
+  -- ===========================================================
+  -- Validation: Functor
+  -- ===========================================================
+  describe "Validation Functor" $ do
+    it "fmap над Success применяет функцию" $
+      fmap (+ 1) (Success 5 :: Validation [String] Int) `shouldBe` Success 6
 
-    it "cStrlen вычисляет длину строки" $ do
-      len <- FFIExample.cStrlen "hello"
-      len `shouldBe` 5
+    it "fmap над Failure не меняет ошибку" $
+      fmap (+ 1) (Failure ["err"] :: Validation [String] Int) `shouldBe` Failure ["err"]
 
-  describe "encodeContacts / decodeContacts (упражнение 1)" $ do
-    it "round-trip для списка контактов" $ do
-      let contacts = exampleContacts
-      decodeContacts (encodeContacts contacts) `shouldBe` Just contacts
+    it "закон identity: fmap id == id" $
+      fmap id (Success 42 :: Validation [String] Int) `shouldBe` Success 42
 
-    it "пустой список" $ do
-      decodeContacts (encodeContacts []) `shouldBe` Just []
+    it "закон композиции: fmap (f . g) == fmap f . fmap g" $
+      let val = Success 3 :: Validation [String] Int
+       in fmap ((* 2) . (+ 1)) val `shouldBe` (fmap (* 2) . fmap (+ 1)) val
 
-    it "один контакт" $ do
-      let contacts = [Contact "Тест" "123" "test@example.com"]
-      decodeContacts (encodeContacts contacts) `shouldBe` Just contacts
+  -- ===========================================================
+  -- Validation: Applicative
+  -- ===========================================================
+  describe "Validation Applicative" $ do
+    it "pure оборачивает значение в Success" $
+      (pure 42 :: Validation [String] Int) `shouldBe` Success 42
 
-  describe "Movie — ручные экземпляры (упражнение 2)" $ do
-    it "round-trip" $ do
-      let movie = Movie "Начало" 2010 8.8
-      decodeMovie (encodeMovie movie) `shouldBe` Just movie
+    it "Success <*> Success применяет функцию" $
+      (Success (+ 1) <*> Success 5 :: Validation [String] Int) `shouldBe` Success 6
 
-    it "парсит JSON с ключами title, year, rating" $ do
-      let json = encode (object
-            [ "title"  .= ("Тест" :: String)
-            , "year"   .= (2020 :: Int)
-            , "rating" .= (7.5 :: Double)
-            ])
-      decodeMovie json `shouldBe` Just (Movie "Тест" 2020 7.5)
+    it "Failure <*> Success сохраняет ошибку" $
+      (Failure ["e1"] <*> Success 5 :: Validation [String] Int) `shouldBe` Failure ["e1"]
 
-    it "не парсит JSON с ключами movieTitle и т.д." $ do
-      let json = encode (object
-            [ "movieTitle"  .= ("Тест" :: String)
-            , "movieYear"   .= (2020 :: Int)
-            , "movieRating" .= (7.5 :: Double)
-            ])
-      decodeMovie json `shouldBe` Nothing
+    it "Success <*> Failure сохраняет ошибку" $
+      (Success (+ 1) <*> Failure ["e2"] :: Validation [String] Int) `shouldBe` Failure ["e2"]
 
-  describe "saveJSON / loadJSON (упражнение 3)" $ do
-    it "round-trip с файлом" $ do
-      tmpDir <- getTemporaryDirectory
-      let path = tmpDir <> "/hbe-ch10-test.json"
-      saveJSON path exampleContacts
-      result <- loadJSON path
-      result `shouldBe` Right exampleContacts
-      removeFile path
+    it "Failure <*> Failure объединяет ошибки" $
+      (Failure ["e1"] <*> Failure ["e2"] :: Validation [String] Int)
+        `shouldBe` Failure ["e1", "e2"]
 
-    it "round-trip с пустым списком" $ do
-      tmpDir <- getTemporaryDirectory
-      let path = tmpDir <> "/hbe-ch10-test2.json"
-      saveJSON path ([] :: [Contact])
-      result <- loadJSON path
-      result `shouldBe` Right ([] :: [Contact])
-      removeFile path
+    it "несколько Failure собирают все ошибки" $
+      let f = Failure ["a"] :: Validation [String] (Int -> Int -> Int)
+          x = Failure ["b"] :: Validation [String] Int
+          y = Failure ["c"] :: Validation [String] Int
+       in (f <*> x <*> y) `shouldBe` Failure ["a", "b", "c"]
 
-    it "невалидный JSON возвращает Left" $ do
-      tmpDir <- getTemporaryDirectory
-      let path = tmpDir <> "/hbe-ch10-test3.json"
-      writeFile path "это не json"
-      result <- loadJSON path :: IO (Either String [Contact])
-      case result of
-        Left _  -> return ()
-        Right _ -> expectationFailure "ожидался Left для невалидного JSON"
-      removeFile path
+  -- ===========================================================
+  -- Упражнение 1: validateTitle
+  -- ===========================================================
+  describe "Упражнение 1: validateTitle" $ do
+    it "корректный заголовок → Success" $
+      validateTitle "Купить молоко" `shouldBe` Success "Купить молоко"
 
-  describe "Config — опциональные поля (упражнение 4)" $ do
-    it "round-trip полного конфига" $ do
-      let config = Config "localhost" 8080 True (Just "/var/log/app.log")
-      decodeConfig (encodeConfig config) `shouldBe` Just config
+    it "пустой заголовок → Failure" $
+      validateTitle "" `shouldBe` Failure ["Заголовок не может быть пустым"]
 
-    it "debug по умолчанию False" $ do
-      let json = encode (object
-            [ "host" .= ("localhost" :: String)
-            , "port" .= (8080 :: Int)
-            ])
-      decodeConfig json `shouldBe` Just (Config "localhost" 8080 False Nothing)
+    it "заголовок длиннее 100 символов → Failure" $
+      validateTitle (T.replicate 101 "x")
+        `shouldBe` Failure ["Заголовок не может быть длиннее 100 символов"]
 
-    it "log_file опционален" $ do
-      let json = encode (object
-            [ "host"  .= ("localhost" :: String)
-            , "port"  .= (8080 :: Int)
-            , "debug" .= True
-            ])
-      decodeConfig json `shouldBe` Just (Config "localhost" 8080 True Nothing)
+    it "заголовок ровно 100 символов → Success" $
+      validateTitle (T.replicate 100 "x")
+        `shouldBe` Success (T.replicate 100 "x")
 
-    it "log_file null → Nothing" $ do
-      let json = encode (object
-            [ "host"     .= ("localhost" :: String)
-            , "port"     .= (8080 :: Int)
-            , "log_file" .= (Nothing :: Maybe String)
-            ])
-      decodeConfig json `shouldBe` Just (Config "localhost" 8080 False Nothing)
+  -- ===========================================================
+  -- Упражнение 2: validatePriority
+  -- ===========================================================
+  describe "Упражнение 2: validatePriority" $ do
+    it "парсит \"low\" как Low" $
+      validatePriority "low" `shouldBe` Success Low
 
-  describe "normalizeText (упражнение 5)" $ do
-    it "приводит к нижнему регистру и убирает лишние пробелы" $
-      normalizeText "  Hello   World  " `shouldBe` "hello world"
+    it "парсит \"medium\" как Medium" $
+      validatePriority "medium" `shouldBe` Success Medium
 
-    it "обрабатывает пустую строку" $
-      normalizeText "" `shouldBe` ""
+    it "парсит \"high\" как High" $
+      validatePriority "high" `shouldBe` Success High
 
-    it "обрабатывает строку из пробелов" $
-      normalizeText "   " `shouldBe` ""
+    it "регистронезависимый: \"HIGH\"" $
+      validatePriority "HIGH" `shouldBe` Success High
 
-    it "одно слово с пробелами вокруг" $
-      normalizeText "  HELLO  " `shouldBe` "hello"
+    it "регистронезависимый: \"Medium\"" $
+      validatePriority "Medium" `shouldBe` Success Medium
 
-    it "уже нормализованная строка" $
-      normalizeText "hello world" `shouldBe` "hello world"
+    it "неизвестный приоритет → Failure" $
+      validatePriority "urgent" `shouldBe` Failure ["Неизвестный приоритет: urgent"]
 
-    it "табуляции и множественные пробелы" $
-      normalizeText "  one   two\tthree  " `shouldBe` "one two three"
+    it "пустая строка → Failure" $
+      validatePriority "" `shouldBe` Failure ["Неизвестный приоритет: "]
+
+  -- ===========================================================
+  -- Упражнение 3: validateTaskInput
+  -- ===========================================================
+  describe "Упражнение 3: validateTaskInput" $ do
+    it "все поля валидны → Success Task" $
+      validateTaskInput "Купить молоко" "Из магазина" "high"
+        `shouldBe` Success (Task "Купить молоко" "Из магазина" High Todo)
+
+    it "невалидный заголовок → одна ошибка" $
+      validateTaskInput "" "Описание" "low"
+        `shouldBe` Failure ["Заголовок не может быть пустым"]
+
+    it "невалидный приоритет → одна ошибка" $
+      validateTaskInput "Задача" "Описание" "urgent"
+        `shouldBe` Failure ["Неизвестный приоритет: urgent"]
+
+    it "оба поля невалидны → все ошибки собираются" $
+      validateTaskInput "" "Описание" "urgent"
+        `shouldBe` Failure
+          [ "Заголовок не может быть пустым"
+          , "Неизвестный приоритет: urgent"
+          ]
+
+  -- ===========================================================
+  -- Упражнение 4: Labelled Functor
+  -- ===========================================================
+  describe "Упражнение 4: Labelled Functor" $ do
+    it "fmap применяет функцию к значению" $
+      fmap (+ 1) (Labelled "x" 5) `shouldBe` Labelled "x" 6
+
+    it "fmap сохраняет метку" $
+      fmap show (Labelled "координата" (3 :: Int)) `shouldBe` Labelled "координата" "3"
+
+    it "закон identity" $
+      fmap id (Labelled "m" 42) `shouldBe` Labelled "m" (42 :: Int)
+
+  -- ===========================================================
+  -- Упражнение 5: RoseTree Functor
+  -- ===========================================================
+  describe "Упражнение 5: RoseTree Functor" $ do
+    it "fmap над листом (без потомков)" $
+      fmap (+ 1) (RoseNode 1 []) `shouldBe` RoseNode 2 ([] :: [RoseTree Int])
+
+    it "fmap над деревом с потомками" $
+      fmap (* 2) (RoseNode 1 [RoseNode 2 [], RoseNode 3 []])
+        `shouldBe` RoseNode 2 [RoseNode 4 [], RoseNode 6 []]
+
+    it "fmap над вложенным деревом" $
+      fmap (+ 10) (RoseNode 1 [RoseNode 2 [RoseNode 3 []]])
+        `shouldBe` RoseNode 11 [RoseNode 12 [RoseNode 13 []]]
+
+    it "закон identity" $
+      let tree = RoseNode 1 [RoseNode 2 [], RoseNode 3 [RoseNode 4 []]]
+       in fmap id tree `shouldBe` (tree :: RoseTree Int)
+
+  -- ===========================================================
+  -- Упражнение 6: Labelled Applicative
+  -- ===========================================================
+  describe "Упражнение 6: Labelled Applicative" $ do
+    it "pure создаёт Labelled с пустой меткой" $
+      (pure 42 :: Labelled Int) `shouldBe` Labelled "" 42
+
+    it "<*> применяет функцию и объединяет метки" $
+      (Labelled "f" (+ 1) <*> Labelled "x" 5) `shouldBe` Labelled "fx" 6
+
+    it "<*> с пустыми метками" $
+      (Labelled "" (* 2) <*> Labelled "" 3) `shouldBe` Labelled "" (6 :: Int)
+
+    it "liftA2 объединяет метки" $
+      let add = Labelled "сумма:" (+)
+          x = Labelled "[1]" (1 :: Int)
+          y = Labelled "[2]" 2
+       in (add <*> x <*> y) `shouldBe` Labelled "сумма:[1][2]" 3

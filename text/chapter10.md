@@ -1,361 +1,524 @@
-# Асинхронные эффекты
+# Тестирование: hspec и QuickCheck
 
-## Цели главы
+К этому моменту у нас есть полноценный CLI-трекер задач: типы данных, чистые функции, IO-операции, обработка ошибок, `Map`, `Text`. Но откуда мы знаем, что код работает правильно? Пора писать тесты. Эта глава посвящена двум фреймворкам: **hspec** для тестов на примерах (unit-тестирование) и **QuickCheck** для тестов на свойствах (property-based testing). Мы разберём генераторы, класс `Arbitrary`, автоматическую минимизацию контрпримеров (shrinking) и интеграцию обоих подходов.
 
-В этой главе мы познакомимся с конкурентностью в Haskell. Мы разберём лёгкие потоки (`forkIO`), синхронизацию через `MVar`, структурированную конкурентность с библиотекой `async` и транзакционную память (`STM`).
+## Подготовка проекта
 
-Проект главы — конкурентный обработчик: параллельное выполнение задач с ограничением и таймаутами.
+Код этой главы находится в `exercises/chapter10`. Соберите проект:
 
-## От `IO` к конкурентности
+```text
+$ cd exercises/chapter10
+$ stack build
+```
 
-В предыдущей главе мы работали с `IO` последовательно: каждое действие ждало завершения предыдущего. Но многие задачи естественно параллельны:
+В `package.yaml` зависимости от `hspec` и `QuickCheck` уже добавлены:
 
-- Скачать несколько файлов одновременно.
-- Обработать данные, пока ожидаем ответ от сервера.
-- Запустить вычисление с таймаутом.
+```yaml
+tests:
+  chapter10-test:
+    dependencies:
+      - hspec
+      - QuickCheck
+      - hspec-discover
+```
 
-В Haskell конкурентность встроена в рантайм. Потоки Haskell — *лёгкие* (green threads): рантайм мультиплексирует их на системные потоки ОС. Создание потока обходится в десятки байт памяти, а не мегабайты.
+## Зачем тестировать
 
-## `forkIO` — лёгкие потоки
+Чистые функции — идеальные кандидаты для тестирования. У них нет побочных эффектов: одни и те же аргументы всегда дают один и тот же результат. Тесты — просто сравнение «вызвал функцию — проверил результат».
 
-`forkIO` запускает IO-действие в отдельном потоке:
+Но даже для чистых функций легко допустить ошибку: пропустить граничный случай (пустой список, отрицательный индекс), перепутать порядок аргументов, забыть обработать `Nothing`. Тесты ловят такие ошибки автоматически.
+
+Два подхода дополняют друг друга:
+
+- **Тесты на примерах** (hspec): конкретные входные данные, конкретные результаты. Хорошо документируют ожидаемое поведение.
+- **Тесты на свойствах** (QuickCheck): *общие* закономерности, сотни случайных примеров. Находят краевые случаи, о которых вы не подумали.
+
+## hspec: тесты на примерах
+
+В [главе 1](chapter01.md) мы уже запускали тесты через `stack test`. Теперь разберём hspec подробнее.
+
+### Структура теста
 
 ```haskell
-import Control.Concurrent (forkIO, threadDelay)
+import Test.Hspec
+
+main :: IO ()
+main = hspec spec
+
+spec :: Spec
+spec = do
+  describe "showPriority" $ do
+    it "returns Низкий for Low" $
+      showPriority Low `shouldBe` "Низкий"
+
+    it "returns Высокий for High" $
+      showPriority High `shouldBe` "Высокий"
+```
+
+- `describe` — группирует тесты по теме (обычно имя функции).
+- `it` — описывает конкретное ожидание на естественном языке.
+- `shouldBe` — утверждение: «результат должен быть равен ...».
+
+Ключевое слово `do` здесь — просто синтаксис для последовательной записи, без погружения в теорию.
+
+```admonish tip title="Знакомый аналог"
+**JavaScript:** hspec ~ Jest/Mocha (`describe`, `it`, `expect(...).toBe(...)`).
+**Python:** hspec ~ pytest (функции с assert) или unittest (`TestCase`, `assertEqual`).
+Синтаксис hspec намеренно близок к RSpec/Jest.
+```
+
+### Основные утверждения
+
+```haskell
+-- Равенство
+result `shouldBe` expected
+
+-- Предикат
+task `shouldSatisfy` isUrgent
+
+-- IO-действие: проверка возвращаемого значения
+readFile "test.txt" `shouldReturn` "содержимое"
+
+-- IO-действие: ожидание исключения
+evaluate (head []) `shouldThrow` anyException
+```
+
+`shouldReturn` выполняет IO-действие и сравнивает результат с ожидаемым значением. `shouldThrow` проверяет, что действие выбрасывает исключение.
+
+### Вложенные describe и pending
+
+```haskell
+spec :: Spec
+spec = do
+  describe "TaskStore" $ do
+    describe "addTask" $ do
+      it "adds a task to empty store" $
+        let store = addTask (TaskId 1) sampleTask emptyStore
+        in Map.size (unTaskStore store) `shouldBe` 1
+
+      it "preserves existing tasks" $
+        let store = addTask (TaskId 1) task1
+                  $ addTask (TaskId 2) task2 emptyStore
+        in Map.size (unTaskStore store) `shouldBe` 2
+
+    describe "removeTask" $ do
+      it "removes existing task" $ pending
+      it "does nothing for missing id" $
+        pendingWith "нужен генератор TaskId"
+```
+
+Тест с `pending` не падает — он отображается как «ожидающий» в отчёте. Удобно для планирования.
+
+### beforeAll, afterAll и --match
+
+Для тестов, которым нужна подготовка, используйте `beforeAll` и `afterAll`:
+
+```haskell
+spec :: Spec
+spec = beforeAll setup $ afterAll cleanup $ do
+  it "reads saved tasks" $ \filePath -> do
+    contents <- readFile filePath
+    contents `shouldSatisfy` (not . null)
+  where
+    setup = do
+      let path = "/tmp/test-tasks.txt"
+      writeFile path "sample data"
+      pure path
+    cleanup = removeFile
+```
+
+Чтобы запускать только нужные тесты:
+
+```text
+$ stack test --test-arguments="--match addTask"
+```
+
+## QuickCheck: тесты на свойствах
+
+QuickCheck предлагает другой подход: вместо перечисления примеров вы описываете **свойство**, которое должно выполняться *для любых* входных данных. Фреймворк сам генерирует сотни случайных примеров и проверяет свойство на каждом.
+
+```admonish note title="Историческая справка"
+QuickCheck был создан в 2000 году Класом Клаэссоном и Джоном Хьюзом специально для Haskell. С тех пор идею переняли десятки языков: fast-check (JavaScript), Hypothesis (Python), proptest (Rust), ScalaCheck и другие. Все — потомки оригинального QuickCheck.
+```
+
+### От примеров к свойствам
+
+Рассмотрим функцию `reverse`. Тесты на примерах проверяют конкретные случаи:
+
+```haskell
+it "reverses [1,2,3]" $
+  reverse [1,2,3] `shouldBe` [3,2,1]
+```
+
+А вот **свойства** `reverse` — общие закономерности:
+
+```haskell
+-- Двойной reverse возвращает исходный список
+prop_reverseReverse :: [Int] -> Bool
+prop_reverseReverse xs = reverse (reverse xs) == xs
+
+-- reverse сохраняет длину
+prop_reverseLength :: [Int] -> Bool
+prop_reverseLength xs = length (reverse xs) == length xs
+```
+
+Каждое свойство — обычная функция, принимающая произвольные данные и возвращающая `Bool`. Имя по конвенции начинается с `prop_`.
+
+### Запуск QuickCheck
+
+```haskell
+import Test.QuickCheck
 
 main :: IO ()
 main = do
-  forkIO $ do
-    threadDelay 1_000_000  -- 1 секунда
-    putStrLn "Поток 1: готово"
-  forkIO $ do
-    threadDelay 500_000    -- 0.5 секунды
-    putStrLn "Поток 2: готово"
-  putStrLn "Главный поток"
-  threadDelay 2_000_000    -- ждём завершения
+  quickCheck prop_reverseReverse
+  quickCheck prop_reverseLength
 ```
 
 ```text
-Главный поток
-Поток 2: готово
-Поток 1: готово
++++ OK, passed 100 tests.
++++ OK, passed 100 tests.
 ```
 
-`threadDelay` приостанавливает поток на заданное число микросекунд (1 секунда = 1\_000\_000).
-
-Проблема `forkIO`: главный поток не ждёт дочерние. Если `main` завершится раньше, дочерние потоки будут убиты. Мы скоро увидим, как `async` решает эту проблему.
-
-## `MVar` — синхронизированные переменные
-
-`MVar a` — это ячейка, которая может быть *пустой* или содержать значение типа `a`. Операции:
+Если свойство нарушается, QuickCheck покажет контрпример:
 
 ```haskell
-import Control.Concurrent.MVar
-
-newEmptyMVar :: IO (MVar a)           -- создать пустую
-newMVar      :: a -> IO (MVar a)      -- создать с начальным значением
-takeMVar     :: MVar a -> IO a        -- взять (блокирует, если пусто)
-putMVar      :: MVar a -> a -> IO ()  -- положить (блокирует, если полно)
+prop_wrong :: [Int] -> Bool
+prop_wrong xs = reverse xs == xs
 ```
 
-`takeMVar` блокирует поток, пока ячейка пуста. `putMVar` блокирует, пока ячейка занята. Это делает `MVar` удобным примитивом синхронизации.
+```text
+*** Failed! Falsifiable (after 4 tests and 3 shrinks):
+[0,1]
+```
 
-### Пример: ожидание результата
+QuickCheck нашёл минимальный контрпример `[0,1]` — список, для которого `reverse xs /= xs`.
+
+### Условные свойства: (==>)
+
+Иногда свойство выполняется не для всех данных. Оператор `(==>)` задаёт предусловие:
 
 ```haskell
-import Control.Concurrent
-import Control.Concurrent.MVar
+prop_headReverse :: [Int] -> Property
+prop_headReverse xs =
+  not (null xs) ==> head (reverse xs) == last xs
+```
 
-compute :: MVar Int -> IO ()
-compute result = do
-  threadDelay 1_000_000
-  putMVar result 42
+Если предусловие не выполняется, QuickCheck пропускает тест. Если слишком много тестов отброшено, QuickCheck предупредит.
+
+```admonish tip title="Знакомый аналог"
+**JavaScript:** QuickCheck ~ fast-check (`fc.property`, `fc.assert`).
+**Python:** QuickCheck ~ Hypothesis (`@given`, `assume`).
+**Rust:** QuickCheck ~ proptest (`proptest!` макрос).
+Все вдохновлены оригинальным Haskell QuickCheck.
+```
+
+## Генераторы и Arbitrary
+
+Откуда QuickCheck берёт случайные данные? За это отвечает класс типов `Arbitrary` и тип `Gen`.
+
+```haskell
+class Arbitrary a where
+  arbitrary :: Gen a
+  shrink :: a -> [a]
+```
+
+`Gen a` — генератор случайных значений типа `a`. Для стандартных типов (`Int`, `Bool`, `[a]`, `String`) экземпляры `Arbitrary` уже определены.
+
+### Базовые генераторы
+
+```haskell
+-- Случайное число в диапазоне
+chooseInt :: (Int, Int) -> Gen Int
+
+-- Случайный элемент из списка
+elements :: [a] -> Gen a
+
+-- Один из нескольких генераторов
+oneof :: [Gen a] -> Gen a
+
+-- Список случайной длины
+listOf :: Gen a -> Gen [a]
+
+-- Список заданной длины
+vectorOf :: Int -> Gen a -> Gen [a]
+```
+
+### Пользовательские экземпляры Arbitrary
+
+Для наших типов экземпляры нужно написать самостоятельно:
+
+```haskell
+instance Arbitrary Priority where
+  arbitrary = elements [Low, Medium, High]
+
+instance Arbitrary Status where
+  arbitrary = elements [Todo, InProgress, Done]
+```
+
+Для `Task` скомбинируем генераторы с помощью `<$>` и `<*>`:
+
+```haskell
+instance Arbitrary Task where
+  arbitrary = Task
+    <$> genTitle       -- taskTitle
+    <*> genDescription -- taskDescription
+    <*> arbitrary      -- taskPriority
+    <*> arbitrary      -- taskStatus
+    where
+      genTitle = elements
+        [ "Купить молоко", "Написать тесты", "Рефакторинг"
+        , "Исправить баг", "Обновить зависимости" ]
+      genDescription = elements ["", "Подробности позже", "Срочно"]
+```
+
+Читайте `<$>` как «применить функцию к результату генератора», а `<*>` как «и ещё один аргумент из генератора». Подробнее об этих операторах — в [главе 11](chapter11.md).
+
+Для `TaskId`:
+
+```haskell
+instance Arbitrary TaskId where
+  arbitrary = TaskId <$> chooseInt (1, 1000)
+```
+
+## Shrinking — минимизация контрпримеров
+
+Когда QuickCheck находит данные, нарушающие свойство, он пытается **уменьшить** контрпример до минимального, сохраняя нарушение. Для списка `[5, -3, 12, 0, -7]` QuickCheck попробует удалить элементы, уменьшить их значения, и так далее — пока не получит минимальный пример вроде `[0, 1]`.
+
+### Определение shrink для своих типов
+
+```haskell
+instance Arbitrary Priority where
+  arbitrary = elements [Low, Medium, High]
+  shrink High   = [Medium, Low]
+  shrink Medium = [Low]
+  shrink Low    = []
+
+instance Arbitrary Task where
+  arbitrary = Task
+    <$> elements ["Задача A", "Задача B", "Задача C"]
+    <*> pure ""
+    <*> arbitrary
+    <*> arbitrary
+  shrink Task{..} =
+    [ Task t d p s
+    | (t, d, p, s) <- shrink (taskTitle, taskDescription, taskPriority, taskStatus)
+    ]
+```
+
+Для `Task` мы делегируем shrinking кортежу полей — QuickCheck автоматически попробует уменьшить каждое поле.
+
+## hspec + QuickCheck вместе
+
+Лучший подход — объединить оба стиля в одном файле тестов. hspec поддерживает QuickCheck через функцию `prop`:
+
+```haskell
+import Test.Hspec
+import Test.Hspec.QuickCheck (prop)
+import Test.QuickCheck
+
+spec :: Spec
+spec = do
+  describe "reverse" $ do
+    -- Тесты на примерах
+    it "reverses [1,2,3] to [3,2,1]" $
+      reverse [1,2,3 :: Int] `shouldBe` [3,2,1]
+
+    -- Тесты на свойствах
+    prop "double reverse is identity" $
+      \(xs :: [Int]) -> reverse (reverse xs) == xs
+
+    prop "preserves length" $
+      \(xs :: [Int]) -> length (reverse xs) == length xs
+```
+
+Функция `prop` из `Test.Hspec.QuickCheck` — сокращение для `it "..." $ property (...)`. Оператор `===` (тройное равно) — аналог `==`, но при ошибке показывает оба значения:
+
+```haskell
+it "double reverse is identity" $ property $
+  \(xs :: [Int]) -> reverse (reverse xs) === xs
+```
+
+````admonish warning title="Проверяйте распределение тестовых данных"
+QuickCheck может генерировать *нерепрезентативные* данные. Используйте `classify` и `cover`, чтобы убедиться, что тесты покрывают интересные случаи:
+
+```haskell
+prop_filterSubset :: TaskFilter -> [Task] -> Property
+prop_filterSubset f tasks =
+  classify (null tasks) "empty list" $
+  classify (length tasks > 10) "long list" $
+  property $ all (`elem` tasks) (filterTasks f tasks)
+```
+
+```text
++++ OK, passed 100 tests:
+12% empty list
+ 8% long list
+80% other
+```
+
+`cover` строже: он *требует* определённый процент каждого класса. Если процент не достигнут, тест считается непройденным.
+````
+
+## Тестируем трекер задач
+
+Соберём всё вместе — полноценный набор тестов для трекера, сочетающий примеры и свойства:
+
+```haskell
+module Main where
+
+import Test.Hspec
+import Test.Hspec.QuickCheck (prop)
+import Test.QuickCheck
+import qualified Data.Map.Strict as Map
+
+import TaskTracker.Types
+import TaskTracker.Store
+import TaskTracker.Filter
 
 main :: IO ()
-main = do
-  result <- newEmptyMVar
-  forkIO (compute result)
-  putStrLn "Ожидаем результат..."
-  value <- takeMVar result    -- блокируется, пока compute не положит значение
-  putStrLn ("Результат: " <> show value)
+main = hspec spec
+
+sampleTask :: Task
+sampleTask = Task "Тестовая задача" "" Medium Todo
+
+emptyStore :: TaskStore
+emptyStore = TaskStore Map.empty
+
+spec :: Spec
+spec = do
+  describe "TaskStore" $ do
+    describe "addTask" $ do
+      it "adds a task to empty store" $
+        let store = addTask (TaskId 1) sampleTask emptyStore
+        in Map.size (unTaskStore store) `shouldBe` 1
+
+      it "preserves existing tasks" $
+        let store = addTask (TaskId 1) sampleTask
+                  $ addTask (TaskId 2) sampleTask emptyStore
+        in Map.size (unTaskStore store) `shouldBe` 2
+
+      prop "size increases by 1 for new key" $
+        \(tid :: TaskId) (task :: Task) ->
+          let store' = addTask tid task emptyStore
+          in Map.size (unTaskStore store') === 1
+
+    describe "removeTask" $ do
+      it "removes existing task" $
+        let store = addTask (TaskId 1) sampleTask emptyStore
+            store' = removeTask (TaskId 1) store
+        in Map.size (unTaskStore store') `shouldBe` 0
+
+      it "does nothing for missing id" $
+        let store = addTask (TaskId 1) sampleTask emptyStore
+            store' = removeTask (TaskId 99) store
+        in Map.size (unTaskStore store') `shouldBe` 1
+
+  describe "filterTasks" $ do
+    it "ByStatus Done returns only done tasks" $
+      let tasks = [sampleTask, sampleTask { taskStatus = Done }]
+      in length (filterTasks (ByStatus Done) tasks) `shouldBe` 1
+
+    prop "AllTasks returns all tasks" $
+      \(tasks :: [Task]) ->
+        filterTasks AllTasks tasks === tasks
+
+    prop "result is always a subset of input" $
+      \(f :: TaskFilter) (tasks :: [Task]) ->
+        all (`elem` tasks) (filterTasks f tasks)
+
+  describe "computeStats" $ do
+    prop "totalTasks equals list length" $
+      \(tasks :: [Task]) ->
+        totalTasks (computeStats tasks) === length tasks
+
+    prop "counts are non-negative" $
+      \(tasks :: [Task]) ->
+        let stats = computeStats tasks
+        in conjoin
+          [ todoCount stats >= 0
+          , doneCount stats >= 0
+          , highPriority stats >= 0
+          ]
 ```
 
-### `MVar` как мьютекс
-
-`MVar ()` часто используется как мьютекс (mutex) — блокировка на критическую секцию:
-
-```haskell
-withLock :: MVar () -> IO a -> IO a
-withLock lock action = do
-  takeMVar lock    -- захватить
-  result <- action
-  putMVar lock ()  -- освободить
-  return result
-```
-
-## Библиотека `async`
-
-`forkIO` низкоуровневый: нет ожидания завершения, нет передачи исключений. Библиотека `async` (Simon Marlow) предоставляет *структурированную конкурентность*:
-
-```haskell
-import Control.Concurrent.Async
-```
-
-### `async` / `wait`
-
-`async` запускает действие в потоке и возвращает хэндл `Async a`. `wait` ожидает результат:
-
-```haskell
-import Control.Exception (evaluate)
-
-main :: IO ()
-main = do
-  a <- async (evaluate (fibSlow 35))
-  b <- async (evaluate (fibSlow 36))
-  x <- wait a
-  y <- wait b
-  putStrLn ("Результат: " <> show (x + y))
-```
-
-> **Важно:** здесь мы используем `evaluate`, а не `return` или `pure`. Выражение `return (fibSlow 35)` создаёт IO-действие, мгновенно возвращающее *thunk* — отложенное вычисление. Сам `fibSlow 35` выполнится только когда thunk будет вынужден (при `show`), то есть последовательно в главном потоке. `evaluate` заставляет вычислить аргумент до WHNF *прямо в потоке*, обеспечивая реальный параллелизм.
-
-### `concurrently`
-
-`concurrently` запускает два действия параллельно и ждёт оба:
-
-```haskell
-concurrently :: IO a -> IO b -> IO (a, b)
-```
-
-```haskell
-(result1, result2) <- concurrently
-  (readFile "file1.txt")
-  (readFile "file2.txt")
-```
-
-Если одно действие бросает исключение, второе автоматически отменяется.
-
-### `race`
-
-`race` запускает два действия и возвращает результат *первого* завершившегося. Второе отменяется:
-
-```haskell
-race :: IO a -> IO b -> IO (Either a b)
-```
-
-Классическое применение — таймаут:
-
-```haskell
-withTimeout :: Int -> IO a -> IO (Maybe a)
-withTimeout usec action = do
-  result <- race (threadDelay usec) action
-  case result of
-    Left ()  -> return Nothing   -- таймер сработал первым
-    Right a  -> return (Just a)  -- действие завершилось вовремя
-```
-
-### `mapConcurrently`
-
-`mapConcurrently` — параллельный `mapM`:
-
-```haskell
-mapConcurrently :: Traversable t => (a -> IO b) -> t a -> IO (t b)
-```
-
-```haskell
--- Прочитать три файла параллельно
-contents <- mapConcurrently readFile ["a.txt", "b.txt", "c.txt"]
-```
-
-### Сравнение: последовательно vs параллельно
-
-```haskell
-import Control.Exception (evaluate)
-import Concurrent (fibSlow, timed)
-import Control.Concurrent.Async (mapConcurrently)
-
-main :: IO ()
-main = do
-  let inputs = [32, 33, 34, 35]
-
-  (seqResults, seqTime) <- timed $
-    mapM (\n -> evaluate (fibSlow n)) inputs
-
-  (parResults, parTime) <- timed $
-    mapConcurrently (\n -> evaluate (fibSlow n)) inputs
-
-  putStrLn ("Последовательно: " <> show seqTime <> " с")
-  putStrLn ("Параллельно:     " <> show parTime <> " с")
-```
-
-Обратите внимание на `evaluate` вместо `pure`: `pure (fibSlow n)` мгновенно вернёт thunk, и фактическое вычисление произойдёт позже — последовательно. `evaluate` гарантирует, что `fibSlow n` вычисляется до WHNF *внутри* потока, поэтому `mapConcurrently` действительно выполняет вычисления параллельно.
-
-На многоядерной машине (с `+RTS -N`) параллельная версия будет значительно быстрее.
-
-## STM — транзакционная память
-
-`MVar` прост, но при работе с несколькими переменными легко получить дедлок. STM (Software Transactional Memory) решает эту проблему через *транзакции*:
-
-```haskell
-import Control.Concurrent.STM
-```
-
-### `TVar` — транзакционная переменная
-
-```haskell
-newTVarIO  :: a -> IO (TVar a)
-readTVar   :: TVar a -> STM a
-writeTVar  :: TVar a -> a -> STM ()
-modifyTVar :: TVar a -> (a -> a) -> STM ()
-```
-
-Обратите внимание: `readTVar` и `writeTVar` работают в монаде `STM`, а не `IO`. Чтобы выполнить транзакцию, используется `atomically`:
-
-```haskell
-atomically :: STM a -> IO a
-```
-
-### Пример: перевод между счетами
-
-```haskell
-type Account = TVar Int
-
-transfer :: Account -> Account -> Int -> STM ()
-transfer from to amount = do
-  balanceFrom <- readTVar from
-  balanceTo   <- readTVar to
-  writeTVar from (balanceFrom - amount)
-  writeTVar to   (balanceTo + amount)
-
-main :: IO ()
-main = do
-  alice <- newTVarIO 100
-  bob   <- newTVarIO 50
-  atomically (transfer alice bob 30)
-  aliceBalance <- readTVarIO alice
-  bobBalance   <- readTVarIO bob
-  putStrLn ("Алиса: " <> show aliceBalance)  -- 70
-  putStrLn ("Боб: "   <> show bobBalance)     -- 80
-```
-
-Транзакция `transfer` атомарна: либо оба счёта обновлены, либо ни один. Если другой поток параллельно читает те же `TVar`, STM автоматически повторит транзакцию при конфликте.
-
-### `retry` и `orElse`
-
-`retry` откладывает транзакцию до изменения одной из прочитанных `TVar`:
-
-```haskell
-withdrawIfEnough :: Account -> Int -> STM ()
-withdrawIfEnough acc amount = do
-  balance <- readTVar acc
-  if balance < amount
-    then retry          -- подождать, пока баланс увеличится
-    else writeTVar acc (balance - amount)
-```
-
-`orElse` пробует первую транзакцию; если она вызовет `retry`, пробует вторую:
-
-```haskell
-orElse :: STM a -> STM a -> STM a
-```
-
-## `QSem` — ограничение конкурентности
-
-Иногда нужно ограничить число одновременных задач (например, не открывать 10 000 HTTP-соединений). `QSem` — семафор из `base`:
-
-```haskell
-import Control.Concurrent.QSem
-
-newQSem    :: Int -> IO QSem      -- создать с начальным значением
-waitQSem   :: QSem -> IO ()       -- захватить (блокирует, если 0)
-signalQSem :: QSem -> IO ()       -- освободить
-```
-
-Пример — ограничение до 3 параллельных задач:
-
-```haskell
-import Control.Concurrent.Async (mapConcurrently)
-import Control.Concurrent.QSem
-
-mapConcurrentlyLimited :: Int -> (a -> IO b) -> [a] -> IO [b]
-mapConcurrentlyLimited n f xs = do
-  sem <- newQSem n
-  mapConcurrently (withSem sem . f) xs
-  where
-    withSem sem action = do
-      waitQSem sem
-      result <- action
-      signalQSem sem
-      return result
-```
+Тесты на примерах проверяют конкретные сценарии (пустое хранилище, удаление несуществующего ключа). Свойства проверяют общие инварианты (размер растёт, результат фильтрации — подмножество входа). `conjoin` из QuickCheck объединяет несколько проверок в одно свойство.
 
 ## Упражнения
 
 Решения пишите в `test/MySolutions.hs`. Проверяйте: `stack test`.
 
-1. **(Лёгкое)** Реализуйте функцию `concurrentSum`, которая суммирует подсписки параллельно.
+### Проект ★☆☆
+
+1. Напишите hspec-тесты для функции `addTask`: проверьте, что после добавления задачи она находится по своему `TaskId`, и что размер хранилища увеличивается на 1.
 
     ```haskell
-    concurrentSum :: [[Int]] -> IO Int
+    addTaskSpec :: Spec
     ```
 
-    ```text
-    > concurrentSum [[1, 2, 3], [4, 5], [6]]
-    21
-    ```
-
-    *Подсказка:* используйте `mapConcurrently` — вычислите `sum` каждого подсписка параллельно, затем сложите результаты.
-
-2. **(Среднее)** Реализуйте функцию `withTimeout`, которая запускает действие с ограничением по времени (в микросекундах).
+2. Напишите hspec-тесты для функции `filterTasks`: проверьте фильтрацию по `ByStatus`, `ByPriority` и `AllTasks` на конкретных примерах (минимум 3 теста).
 
     ```haskell
-    withTimeout :: Int -> IO a -> IO (Maybe a)
+    filterTasksSpec :: Spec
     ```
 
-    ```text
-    > withTimeout 1_000_000 (return 42)
-    Just 42
-    > withTimeout 50_000 (threadDelay 1_000_000 >> return 42)
-    Nothing
-    ```
+### Проект ★★☆
 
-    *Подсказка:* используйте `race` из `Control.Concurrent.Async` и `threadDelay` из `Control.Concurrent`.
-
-3. **(Среднее)** Реализуйте конкурентный подсчёт слов в нескольких файлах.
+3. Напишите QuickCheck-свойства для трекера задач:
+    - `addTask` с новым ключом увеличивает размер хранилища на 1.
+    - `removeTask` после `addTask` с тем же ключом возвращает исходное хранилище.
+    - `filterTasks` с `AllTasks` всегда возвращает исходный список.
 
     ```haskell
-    concurrentWordCount :: [FilePath] -> IO [(FilePath, Int)]
+    trackerProperties :: Spec
     ```
 
-    ```text
-    > writeFile "/tmp/a.txt" "один два три"
-    > writeFile "/tmp/b.txt" "четыре пять"
-    > concurrentWordCount ["/tmp/a.txt", "/tmp/b.txt"]
-    [("/tmp/a.txt", 3), ("/tmp/b.txt", 2)]
-    ```
+    *Подсказка:* для первого свойства используйте `(==>)`, чтобы ключ не существовал в хранилище.
 
-    *Подсказка:* используйте `mapConcurrently`. Для каждого файла прочитайте содержимое (`readFile`), разбейте на слова (`words`) и подсчитайте длину.
+### Практика ★☆☆
 
-4. **(Сложное)** Реализуйте `mapConcurrentlyLimited` — аналог `mapConcurrently`, но с ограничением максимального числа одновременных задач.
+4. Напишите hspec-тесты для функции `reverse`: проверьте на пустом списке, одноэлементном и многоэлементном списке.
 
     ```haskell
-    mapConcurrentlyLimited :: Int -> (a -> IO b) -> [a] -> IO [b]
+    reverseSpec :: Spec
     ```
 
-    ```text
-    > mapConcurrentlyLimited 2 (\x -> threadDelay 100_000 >> return (x * 2)) [1..5]
-    [2, 4, 6, 8, 10]
+5. Напишите hspec-тесты для `Data.Map.lookup`: проверьте поиск существующего ключа, несуществующего ключа и поиск в пустом `Map`.
+
+    ```haskell
+    lookupSpec :: Spec
     ```
 
-    *Подсказка:* используйте `QSem` из `Control.Concurrent.QSem`. Создайте семафор с ёмкостью `n`, оберните каждую задачу в `waitQSem` / `signalQSem`, а запуск делегируйте `mapConcurrently`.
+### Практика ★★☆
+
+6. Напишите экземпляр `Arbitrary` для типа `TaskFilter` и QuickCheck-свойство: результат `filterTasks f tasks` всегда подсписок `tasks`.
+
+    ```haskell
+    instance Arbitrary TaskFilter where
+      arbitrary = undefined -- ваша реализация
+
+    prop_filterSubset :: TaskFilter -> [Task] -> Bool
+    ```
+
+    *Подсказка:* используйте `oneof` для генерации разных конструкторов `TaskFilter`.
+
+7. Напишите QuickCheck-свойства для сортировки: `sort xs` отсортирован, и `sort . sort == sort` (идемпотентность).
+
+    ```haskell
+    prop_sortOrdered :: [Int] -> Bool
+    prop_sortIdempotent :: [Int] -> Bool
+    ```
+
+    *Подсказка:* напишите `isSorted :: Ord a => [a] -> Bool` через `zip xs (drop 1 xs)`.
 
 ## Заключение
 
-В этой главе мы:
+Эта глава завершает **Часть II** книги. Путь от базовых типов до IO, обработки ошибок, ленивости и тестирования пройден. Теперь в арсенале есть всё для написания надёжных программ: hspec для проверки конкретных сценариев (`describe`, `it`, `shouldBe`, `shouldReturn`, `shouldThrow`), QuickCheck для проверки общих инвариантов (`quickCheck`, `property`, `==>`), генераторы (`Gen`, `choose`, `elements`, `oneof`), пользовательские экземпляры `Arbitrary`, автоматический shrinking и интеграция обоих подходов через `prop`.
 
-- Познакомились с лёгкими потоками (`forkIO`) и синхронизацией через `MVar`.
-- Освоили структурированную конкурентность с `async`: `concurrently`, `race`, `mapConcurrently`.
-- Разобрали STM — транзакционную память для безопасной работы с разделяемым состоянием.
-- Научились ограничивать конкурентность через `QSem`.
+В [Части III](chapter11.md) мы перейдём к абстракциям: `Functor`, `Applicative` и монады. Эти концепции формализуют паттерны, которые мы уже встречали (например, `<$>` и `<*>` из генераторов QuickCheck — это именно `Functor` и `Applicative`). Тесты, которые мы научились писать, помогут проверять код на каждом шаге.
 
-В следующей главе мы познакомимся с FFI (Foreign Function Interface) — вызовом C-функций из Haskell и работой с JSON через `aeson`.
+```admonish tip title="Для углубления"
+- **Haskell MOOC** — [haskell.mooc.fi](https://haskell.mooc.fi/), лекция 16: property-based testing и QuickCheck.
+- **QuickCheck manual** — [hackage.haskell.org/package/QuickCheck](https://hackage.haskell.org/package/QuickCheck) — документация и примеры.
+- **hspec user's guide** — [hspec.github.io](https://hspec.github.io/) — полное руководство по hspec.
+```

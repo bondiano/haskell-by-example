@@ -1,6 +1,6 @@
 name: chapter16
 version: 0.1.0.0
-synopsis: "Haskell by Example — Глава 16: GADTs и семейства типов"
+synopsis: "Haskell by Example — Глава 16: Конкурентность и async"
 license: MIT
 
 default-extensions:
@@ -19,23 +19,16 @@ default-extensions:
   - TupleSections
   - NumericUnderscores
   - ImportQualifiedPost
-  - GADTs
-  - DataKinds
-  - TypeFamilies
-  - KindSignatures
-  - StandaloneDeriving
-  - RankNTypes
-  - TypeOperators
-  - UndecidableInstances
-  - FlexibleInstances
-  - FlexibleContexts
 
 dependencies:
   - base >= 4.18 && < 5
-  - containers
 
 library:
   source-dirs: src
+  dependencies:
+    - containers
+    - stm
+    - async
 
 tests:
   chapter16-tests:
@@ -44,4 +37,5 @@ tests:
     dependencies:
       - chapter16
       - hspec
-      - containers
+      - stm
+      - async

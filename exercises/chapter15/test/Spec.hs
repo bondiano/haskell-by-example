@@ -1,104 +1,200 @@
 module Main where
 
-import Test.Hspec
-import Data.Either (isLeft)
 import Data.Map.Strict qualified as Map
-import Language.Expr (Expr(..))
-import Language.Json (JValue(..))
+import Data.Text (Text)
+import Data.Text qualified as T
+import Test.Hspec
 
 import MySolutions
+import TaskTracker
 
 main :: IO ()
 main = hspec $ do
-  describe "Упражнение 1: вычислитель выражений" $ do
-    it "вычисляет литерал" $
-      eval (Lit 42) `shouldBe` Right 42
-    it "вычисляет сложение" $
-      eval (Add (Lit 1) (Lit 2)) `shouldBe` Right 3
-    it "вычисляет вычитание" $
-      eval (Sub (Lit 10) (Lit 4)) `shouldBe` Right 6
-    it "вычисляет умножение" $
-      eval (Mul (Lit 3) (Lit 7)) `shouldBe` Right 21
-    it "вычисляет деление" $
-      eval (Div (Lit 10) (Lit 4)) `shouldBe` Right 2.5
-    it "вычисляет унарный минус" $
-      eval (Neg (Lit 5)) `shouldBe` Right (-5)
-    it "вычисляет вложенное выражение" $
-      eval (Mul (Add (Lit 2) (Lit 3)) (Sub (Lit 10) (Lit 4)))
-        `shouldBe` Right 30
-    it "деление на ноль возвращает ошибку" $
-      eval (Div (Lit 10) (Lit 0)) `shouldBe` Left "division by zero"
-    it "переменная без окружения возвращает ошибку" $
-      eval (Var "x") `shouldSatisfy` isLeft
-    it "let без окружения возвращает ошибку" $
-      eval (Let "x" (Lit 1) (Var "x")) `shouldSatisfy` isLeft
+  -- Тестовые данные
+  let task1 = Task "Купить молоко" Medium Todo
+      task2 = Task "Написать отчёт" High InProgress
+      task3 = Task "Полить цветы" Low Done
+      task4 = Task "Подготовить презентацию" High Todo
+      store =
+        TaskStore $
+          Map.fromList
+            [ (TaskId 1, task1)
+            , (TaskId 2, task2)
+            , (TaskId 3, task3)
+            , (TaskId 4, task4)
+            ]
 
-  describe "Упражнение 2: оптимизатор AST" $ do
-    it "0 + x → x" $
-      optimize (Add (Lit 0) (Var "x")) `shouldBe` Var "x"
-    it "x + 0 → x" $
-      optimize (Add (Var "x") (Lit 0)) `shouldBe` Var "x"
-    it "0 * x → Lit 0" $
-      optimize (Mul (Lit 0) (Var "x")) `shouldBe` Lit 0
-    it "x * 0 → Lit 0" $
-      optimize (Mul (Var "x") (Lit 0)) `shouldBe` Lit 0
-    it "1 * x → x" $
-      optimize (Mul (Lit 1) (Var "x")) `shouldBe` Var "x"
-    it "x * 1 → x" $
-      optimize (Mul (Var "x") (Lit 1)) `shouldBe` Var "x"
-    it "x - 0 → x" $
-      optimize (Sub (Var "x") (Lit 0)) `shouldBe` Var "x"
-    it "Neg (Neg x) → x" $
-      optimize (Neg (Neg (Var "x"))) `shouldBe` Var "x"
-    it "рекурсивная оптимизация: 1 * (0 + y) → y" $
-      optimize (Mul (Lit 1) (Add (Lit 0) (Var "y"))) `shouldBe` Var "y"
-    it "не затрагивает выражения без упрощений" $
-      optimize (Add (Var "x") (Var "y")) `shouldBe` Add (Var "x") (Var "y")
+  describe "Упражнение 1: computeStats" $ do
+    it "считает статистику для хранилища с задачами" $ do
+      let stats = computeStats store
+      totalTasks stats `shouldBe` 4
+      todoCount stats `shouldBe` 2
+      doneCount stats `shouldBe` 1
+      highPriority stats `shouldBe` 2
 
-  describe "Упражнение 3: парсер JSON" $ do
-    it "парсит null" $
-      parseJson "null" `shouldBe` Right JNull
-    it "парсит true" $
-      parseJson "true" `shouldBe` Right (JBool True)
-    it "парсит false" $
-      parseJson "false" `shouldBe` Right (JBool False)
-    it "парсит целое число" $
-      parseJson "42" `shouldBe` Right (JNumber 42)
-    it "парсит дробное число" $
-      parseJson "3.14" `shouldBe` Right (JNumber 3.14)
-    it "парсит строку" $
-      parseJson "\"hello\"" `shouldBe` Right (JString "hello")
-    it "парсит пустой массив" $
-      parseJson "[]" `shouldBe` Right (JArray [])
-    it "парсит массив значений" $
-      parseJson "[1, true, null]" `shouldBe`
-        Right (JArray [JNumber 1, JBool True, JNull])
-    it "парсит пустой объект" $
-      parseJson "{}" `shouldBe` Right (JObject [])
-    it "парсит объект" $
-      parseJson "{\"name\": \"Alice\", \"age\": 30}" `shouldBe`
-        Right (JObject [("name", JString "Alice"), ("age", JNumber 30)])
-    it "парсит вложенные структуры" $
-      parseJson "{\"a\": [1, {\"b\": 2}]}" `shouldBe`
-        Right (JObject [("a", JArray [JNumber 1, JObject [("b", JNumber 2)]])])
+    it "считает статистику для пустого хранилища" $ do
+      let stats = computeStats emptyStore
+      totalTasks stats `shouldBe` 0
+      todoCount stats `shouldBe` 0
+      doneCount stats `shouldBe` 0
+      highPriority stats `shouldBe` 0
 
-  describe "Упражнение 4: вычислитель с переменными" $ do
-    it "вычисляет литерал" $
-      evalWithVars Map.empty (Lit 42) `shouldBe` Right 42
-    it "находит переменную в окружении" $
-      evalWithVars (Map.singleton "x" 10) (Var "x") `shouldBe` Right 10
-    it "ошибка для неизвестной переменной" $
-      evalWithVars Map.empty (Var "x") `shouldBe` Left "undefined variable: x"
-    it "вычисляет let-привязку" $
-      evalWithVars Map.empty (Let "x" (Lit 5) (Add (Var "x") (Lit 3)))
-        `shouldBe` Right 8
-    it "let перекрывает внешнюю переменную" $
-      evalWithVars (Map.singleton "x" 1) (Let "x" (Lit 99) (Var "x"))
-        `shouldBe` Right 99
-    it "вложенные let-привязки" $
-      evalWithVars Map.empty
-        (Let "x" (Lit 2) (Let "y" (Lit 3) (Mul (Var "x") (Var "y"))))
-        `shouldBe` Right 6
-    it "деление на ноль с переменными" $
-      evalWithVars (Map.singleton "x" 0) (Div (Lit 1) (Var "x"))
-        `shouldBe` Left "division by zero"
+    it "считает статистику для хранилища с одной задачей" $ do
+      let s = addTask (TaskId 1) (Task "Тест" High Done) emptyStore
+          stats = computeStats s
+      totalTasks stats `shouldBe` 1
+      todoCount stats `shouldBe` 0
+      doneCount stats `shouldBe` 1
+      highPriority stats `shouldBe` 1
+
+  describe "Упражнение 2: mkPriority" $ do
+    it "парсит \"low\"" $
+      mkPriority "low" `shouldBe` Just Low
+
+    it "парсит \"medium\"" $
+      mkPriority "medium" `shouldBe` Just Medium
+
+    it "парсит \"high\"" $
+      mkPriority "high" `shouldBe` Just High
+
+    it "регистронезависимый: \"HIGH\"" $
+      mkPriority "HIGH" `shouldBe` Just High
+
+    it "регистронезависимый: \"Medium\"" $
+      mkPriority "Medium" `shouldBe` Just Medium
+
+    it "регистронезависимый: \"LoW\"" $
+      mkPriority "LoW" `shouldBe` Just Low
+
+    it "неизвестное значение — Nothing" $
+      mkPriority "urgent" `shouldBe` Nothing
+
+    it "пустая строка — Nothing" $
+      mkPriority "" `shouldBe` Nothing
+
+  describe "Упражнение 3: parseCommand" $ do
+    it "парсит команду add" $
+      parseCommand "add Купить хлеб" `shouldBe` Just (AddCmd "Купить хлеб")
+
+    it "парсит команду list" $
+      parseCommand "list" `shouldBe` Just ListCmd
+
+    it "парсит команду done" $
+      parseCommand "done 3" `shouldBe` Just (DoneCmd (TaskId 3))
+
+    it "парсит команду delete" $
+      parseCommand "delete 5" `shouldBe` Just (DeleteCmd (TaskId 5))
+
+    it "парсит команду quit" $
+      parseCommand "quit" `shouldBe` Just QuitCmd
+
+    it "неизвестная команда — Nothing" $
+      parseCommand "unknown" `shouldBe` Nothing
+
+    it "done без числа — Nothing" $
+      parseCommand "done abc" `shouldBe` Nothing
+
+    it "delete без числа — Nothing" $
+      parseCommand "delete" `shouldBe` Nothing
+
+    it "add без текста — Nothing" $
+      parseCommand "add" `shouldBe` Nothing
+
+  describe "Упражнение 4: renderTask, renderTaskList, renderStats" $ do
+    it "renderTask форматирует задачу" $
+      renderTask (TaskId 1, Task "Купить молоко" Medium Todo)
+        `shouldBe` "[1] Купить молоко (Medium, Todo)"
+
+    it "renderTask для другой задачи" $
+      renderTask (TaskId 3, Task "Полить цветы" Low Done)
+        `shouldBe` "[3] Полить цветы (Low, Done)"
+
+    it "renderTaskList форматирует список задач" $ do
+      let tasks = [(TaskId 1, task1), (TaskId 2, task2)]
+      renderTaskList tasks
+        `shouldBe` "[1] Купить молоко (Medium, Todo)\n[2] Написать отчёт (High, InProgress)"
+
+    it "renderTaskList для пустого списка" $
+      renderTaskList [] `shouldBe` ""
+
+    it "renderStats форматирует статистику" $ do
+      let stats = TaskStats 4 2 1 2
+      renderStats stats
+        `shouldBe` "Всего: 4, Todo: 2, Done: 1, Высокий приоритет: 2"
+
+  describe "Упражнение 5: NonEmptyText" $ do
+    it "принимает непустой текст" $
+      mkNonEmptyText "hello" `shouldSatisfy` isJust
+
+    it "отклоняет пустой текст" $
+      mkNonEmptyText "" `shouldBe` Nothing
+
+    it "отклоняет текст из одних пробелов" $
+      mkNonEmptyText "   " `shouldBe` Nothing
+
+    it "извлекает значение обратно" $
+      case mkNonEmptyText "hello" of
+        Just net -> unNonEmptyText net `shouldBe` "hello"
+        Nothing -> expectationFailure "Ожидали Just"
+
+    it "сохраняет пробелы внутри текста" $
+      case mkNonEmptyText "hello world" of
+        Just net -> unNonEmptyText net `shouldBe` "hello world"
+        Nothing -> expectationFailure "Ожидали Just"
+
+  describe "Упражнение 6: lookupDefault" $ do
+    it "находит существующий ключ" $ do
+      let m = Map.fromList [("a" :: String, 1 :: Int), ("b", 2)]
+      lookupDefault 0 "a" m `shouldBe` 1
+
+    it "возвращает значение по умолчанию для отсутствующего ключа" $ do
+      let m = Map.fromList [("a" :: String, 1 :: Int)]
+      lookupDefault 42 "z" m `shouldBe` 42
+
+    it "работает с пустым Map" $ do
+      let m = Map.empty :: Map.Map String Int
+      lookupDefault 99 "x" m `shouldBe` 99
+
+  describe "Упражнение 7: parseCSV" $ do
+    it "парсит одну строку" $
+      parseCSV "Купить молоко,low,todo"
+        `shouldBe` Right [Task "Купить молоко" Low Todo]
+
+    it "парсит несколько строк" $
+      parseCSV "Задача 1,high,todo\nЗадача 2,medium,done"
+        `shouldBe` Right
+          [ Task "Задача 1" High Todo
+          , Task "Задача 2" Medium Done
+          ]
+
+    it "парсит все статусы" $
+      parseCSV "A,low,todo\nB,low,in_progress\nC,low,done"
+        `shouldBe` Right
+          [ Task "A" Low Todo
+          , Task "B" Low InProgress
+          , Task "C" Low Done
+          ]
+
+    it "ошибка при неверном приоритете" $
+      parseCSV "Задача,urgent,todo"
+        `shouldSatisfy` isLeft
+
+    it "ошибка при неверном статусе" $
+      parseCSV "Задача,low,waiting"
+        `shouldSatisfy` isLeft
+
+    it "ошибка при неверном формате (недостаточно полей)" $
+      parseCSV "Задача,low"
+        `shouldSatisfy` isLeft
+
+    it "пустая строка — пустой список" $
+      parseCSV "" `shouldBe` Right []
+
+-- | Вспомогательные функции для проверки
+isJust :: Maybe a -> Bool
+isJust (Just _) = True
+isJust Nothing = False
+
+isLeft :: Either a b -> Bool
+isLeft (Left _) = True
+isLeft (Right _) = False

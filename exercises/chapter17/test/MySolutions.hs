@@ -1,85 +1,140 @@
 module MySolutions where
 
-import Control.Lens
-import Data.Char (toUpper)
-import Data.Functor.Const (Const(..))
-import Data.Functor.Identity (Identity(..))
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
+import Data.Text (Text)
+import Data.Text qualified as T
 
-import Data.Company
+import TaskTracker
 
--- Упражнение 1: линзы для Person / Address
+-- ============================================================
+-- Упражнение 1: Логика завершения задачи
 --
--- Определите типы Address и Person с полями, начинающимися с _.
--- Вызовите makeLenses для генерации линз.
--- Реализуйте getCity, setCity, upperName через view, set, over.
+-- Если задача уже Done → Left "Задача уже выполнена"
+-- Иначе → Right (задача с taskStatus = Done)
+-- ============================================================
 
-data Address = Address
-  { _city    :: String
-  , _street  :: String
-  , _zipCode :: String
-  } deriving stock (Show, Eq)
+{- | Логика завершения задачи (чистая функция, без базы данных).
 
-makeLenses ''Address
+>>> handleCompleteLogic (Task "Тест" Low Todo)
+Right (Task {taskTitle = "Тест", taskPriority = Low, taskStatus = Done})
 
-data Person = Person
-  { _personName    :: String
-  , _personAge     :: Int
-  , _personAddress :: Address
-  } deriving stock (Show, Eq)
+>>> handleCompleteLogic (Task "Тест" Low Done)
+Left "Задача уже выполнена"
+-}
+handleCompleteLogic :: Task -> Either Text Task
+handleCompleteLogic = undefined
 
-makeLenses ''Person
-
-getCity :: Person -> String
-getCity = undefined
-
-setCity :: String -> Person -> Person
-setCity = undefined
-
-upperName :: Person -> Person
-upperName = undefined
-
--- Упражнение 2: повышение зарплаты через traversal
+-- ============================================================
+-- Упражнение 2: Статистика по статусам
 --
--- Используйте over, traversed и составные линзы, чтобы
--- увеличить зарплату ВСЕХ сотрудников компании на заданную сумму.
+-- Подсчитайте количество задач для каждого статуса.
+-- Ключи: "todo", "in_progress", "done".
+-- ============================================================
+
+{- | Подсчёт задач по статусам.
+
+>>> computeStatsMap [Task "A" Low Todo, Task "B" High Done]
+fromList [("done",1),("todo",1)]
+-}
+computeStatsMap :: [Task] -> Map Text Int
+computeStatsMap = undefined
+
+-- ============================================================
+-- Упражнение 3: Пагинация
 --
--- Путь: companyDepartments . traversed . departmentEmployees . traversed . employeeSalary
+-- paginate page perPage xs — взять perPage элементов со страницы page.
+-- Страницы нумеруются с 1.
+-- paginate 1 20 xs = take 20 xs
+-- paginate 2 20 xs = take 20 (drop 20 xs)
+-- ============================================================
 
-raiseSalary :: Double -> Company -> Company
-raiseSalary = undefined
+{- | Пагинация списка.
 
--- Упражнение 3: извлечение Right-значений через призму
+>>> paginate 1 3 [1..10]
+[1,2,3]
+
+>>> paginate 2 3 [1..10]
+[4,5,6]
+-}
+paginate :: Int -> Int -> [a] -> [a]
+paginate = undefined
+
+-- ============================================================
+-- Упражнение 4: Поиск по названию
 --
--- Используйте toListOf, traversed и _Right, чтобы
--- извлечь все Right-значения из списка Either.
+-- Регистронезависимый поиск по подстроке в taskTitle.
+-- Подсказка: T.isInfixOf и T.toLower.
+-- ============================================================
 
-rightValues :: [Either String Int] -> [Int]
-rightValues = undefined
+{- | Поиск задач по подстроке в названии.
 
--- Упражнение 4: van Laarhoven lens
+>>> searchByTitle "молоко" [Task "Купить молоко" Low Todo]
+[Task {taskTitle = "Купить молоко", taskPriority = Low, taskStatus = Todo}]
+-}
+searchByTitle :: Text -> [Task] -> [Task]
+searchByTitle = undefined
+
+-- ============================================================
+-- Упражнение 5: Валидация приоритета
 --
--- Реализуйте собственную кодировку линз.
--- Линза — это функция, которая работает с любым Functor f:
---   type MyLens s a = forall f. Functor f => (a -> f a) -> s -> f s
+-- Проверить и нормализовать строку приоритета.
+-- "HIGH" → Right "high", "Low" → Right "low"
+-- Неизвестное → Left "Неизвестный приоритет: X"
+-- ============================================================
+
+{- | Валидация и нормализация строки приоритета.
+
+>>> validatePriority "HIGH"
+Right "high"
+
+>>> validatePriority "urgent"
+Left "Неизвестный приоритет: urgent"
+-}
+validatePriority :: Text -> Either Text Text
+validatePriority = undefined
+
+-- ============================================================
+-- Упражнение 6: Конвертация Task в TaskResponse
 --
--- myView использует Const для «чтения» значения.
--- myOver использует Identity для «модификации» значения.
--- mySet  реализуется через myOver.
--- fstL, sndL — линзы для элементов пары.
+-- Преобразуйте Task в TaskResponse, добавив id и
+-- конвертировав Priority/Status в текст.
+-- ============================================================
 
-type MyLens s a = forall f. Functor f => (a -> f a) -> s -> f s
+{- | Создать TaskResponse из идентификатора и задачи.
 
-myView :: MyLens s a -> s -> a
-myView _ _ = undefined
+>>> entityToResponse 1 (Task "Тест" Low Todo)
+TaskResponse {responseId = 1, responseTitle = "Тест", responsePriority = "low", responseStatus = "todo"}
+-}
+entityToResponse :: Int -> Task -> TaskResponse
+entityToResponse = undefined
 
-myOver :: MyLens s a -> (a -> a) -> s -> s
-myOver _ _ _ = undefined
+-- ============================================================
+-- Упражнение 7: Конвертация Priority ↔ Text
+--
+-- priorityToText: Low → "low", Medium → "medium", High → "high"
+-- textToPriority: обратная операция, регистронезависимая
+-- ============================================================
 
-mySet :: MyLens s a -> a -> s -> s
-mySet _ _ _ = undefined
+-- | Конвертация Priority в Text.
+priorityToText :: Priority -> Text
+priorityToText = undefined
 
-fstL :: MyLens (a, b) a
-fstL = undefined
+-- | Конвертация Text в Priority (регистронезависимая).
+textToPriority :: Text -> Either Text Priority
+textToPriority = undefined
 
-sndL :: MyLens (a, b) b
-sndL = undefined
+-- ============================================================
+-- Упражнение 8: Конвертация Status ↔ Text
+--
+-- statusToText: Todo → "todo", InProgress → "in_progress", Done → "done"
+-- textToStatus: обратная операция, регистронезависимая
+-- ============================================================
+
+-- | Конвертация Status в Text.
+statusToText :: Status -> Text
+statusToText = undefined
+
+-- | Конвертация Text в Status (регистронезависимая).
+textToStatus :: Text -> Either Text Status
+textToStatus = undefined

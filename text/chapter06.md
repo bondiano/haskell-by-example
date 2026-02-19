@@ -1,671 +1,545 @@
-# Классы типов
+# Стандартные структуры данных
 
-## Цели главы
+Это последняя глава первой части книги. К этому моменту мы познакомились с типами, функциями, записями, алгебраическими типами данных, паттерн-матчингом, рекурсией, свёртками и классами типов. Но наш трекер задач хранит задачи в обычном списке `[Task]`, а текст представляет типом `String`. Для учебных примеров это работает, но в реальном коде так не делают. Здесь мы разберёмся, почему `String` — плохой выбор для текста, и перейдём на `Text`. Освоим `Map` — ассоциативный массив с быстрым поиском по ключу — и `Set` — множество уникальных элементов. Узнаем, когда использовать `IntMap`, `HashMap` и `Vector`. А главное — обновим трекер задач: `Map TaskId Task` вместо списка, `Set Tag` вместо списка тегов. К концу главы наш проект станет ощутимо ближе к тому, как устроены настоящие Haskell-приложения.
 
-В этой главе мы познакомимся с классами типов (type classes) — механизмом полиморфизма в Haskell. Мы разберём стандартные классы `Eq`, `Ord`, `Show`, `Read`, `Enum` и `Bounded`, научимся создавать собственные классы и их экземпляры, а также освоим автоматическую деривацию и расширение `DerivingStrategies`.
+## Проблемы с String
 
-Проект главы — библиотека хэширования с классом `Hashable`.
-
-## Параметрический и ad-hoc полиморфизм
-
-Прежде чем разбирать классы типов, важно понять *зачем* они нужны. В Haskell существуют два вида полиморфизма:
-
-### Параметрический полиморфизм
-
-Функция работает *одинаково* для любого типа. Реализация ничего не знает о конкретном типе и не может заглядывать внутрь:
+Вспомним определение `String` в Haskell:
 
 ```haskell
-identity :: a -> a
-identity x = x  -- единственная возможная реализация!
+type String = [Char]
 ```
 
-Из типа `a -> a` следует, что функция *может только вернуть свой аргумент*. Она не может создать значение типа `a` из ничего (не знает, как), не может его изменить (не знает, что внутри). Это называется **свободная теорема** (free theorem, Wadler 1989).
+`String` — это просто список символов. Связный список. Каждый символ хранится в отдельном узле с указателем на следующий. Это означает:
 
-Другой пример: для любой функции `f :: [a] -> [a]` автоматически выполняется:
+- **Расход памяти.** На каждый символ — накладные расходы на узел списка (около 40 байт на символ вместо 1–4 байтов).
+- **Скорость.** Конкатенация, поиск подстроки, определение длины — всё O(n), причём с большой константой.
+- **Юникод.** `Char` — это кодовая точка Unicode, и `String` корректно работает с Юникодом. Но делает это медленно.
 
-```text
-map g . f == f . map g
+Для интерактивного ввода и маленьких строк `String` подходит. Для всего остального — нет.
+
+```admonish warning title="Правило"
+В реальном коде всегда используйте `Text` вместо `String`. Исключение — взаимодействие с API, которые требуют `String` (например, `FilePath`).
 ```
 
-Это свойство следует *только из типа*, без анализа реализации. Параметрический полиморфизм даёт мощные гарантии бесплатно.
+## Text — эффективные строки
 
-### Ad-hoc полиморфизм
+Модуль `Data.Text` предоставляет тип `Text` — компактное представление текста в кодировке UTF-16. Внутри — непрерывный массив, а не связный список.
 
-Функция работает *по-разному* для разных типов. Каждый тип предоставляет свою реализацию:
+### Подключение
 
 ```haskell
--- Для Int: побитовое сравнение
--- Для String: посимвольное сравнение
--- Для [a]: поэлементное сравнение
-(==) :: Eq a => a -> a -> Bool
+import Data.Text (Text)
+import Data.Text qualified as T
 ```
 
-**Type classes** — механизм, которым Haskell реализует ad-hoc полиморфизм. В отличие от OOP-диспетчеризации, type classes позволяют **диспетчеризацию по возвращаемому типу**:
+```admonish note title="Квалифицированные импорты"
+Паттерн `import Module qualified as M` — стандартная практика для модулей-контейнеров. Так мы избегаем конфликтов имён: `T.length` — длина `Text`, `length` — длина списка. Этот паттерн используется для `Data.Map`, `Data.Set`, `Data.Text` и многих других модулей.
+```
+
+### OverloadedStrings
+
+По умолчанию строковые литералы `"hello"` имеют тип `String`. Расширение `OverloadedStrings` (включённое в нашем проекте) делает их полиморфными — по аналогии с тем, как числовой литерал `42` имеет тип `Num a => a`:
 
 ```haskell
-read :: Read a => String -> a
--- read "42" :: Int      → 42
--- read "42" :: Double   → 42.0
--- Какой read вызвать — определяется типом *результата*!
+{-# LANGUAGE OverloadedStrings #-}
+
+greeting :: Text
+greeting = "Привет, мир!"  -- литерал автоматически становится Text
 ```
 
-Это невозможно в Java или TypeScript — там выбор метода определяется типом *объекта* (receiver).
+Без расширения пришлось бы писать `T.pack "Привет, мир!"`.
 
-```admonish info title="Знакомый аналог"
-**TypeScript:** `function identity<T>(x: T): T` — параметрический полиморфизм.
-`interface Eq { equals(other: this): boolean }` — ad-hoc. Но TS не может вывести
-свободные теоремы (из-за `any`, side effects), и не может диспетчеризовать по return type.
-
-**Python:** `typing.TypeVar` для параметрического, `Protocol` (PEP 544) для ad-hoc.
-Без enforcement в runtime.
+```admonish tip title="Знакомый аналог"
+`OverloadedStrings` — это как неявные преобразования строк. В Python `str` всегда Unicode. В Java `String` — всегда UTF-16. В Haskell нужно явно выбрать `Text` и включить расширение, чтобы литералы работали «как ожидается».
 ```
 
-### Зачем два вида?
-
-| | Параметрический | Ad-hoc (type classes) |
-|---|---|---|
-| Реализация | Одна на все типы | Своя для каждого типа |
-| Гарантии | Свободные теоремы | Законы класса (по соглашению) |
-| Пример | `length :: [a] -> Int` | `show :: Show a => a -> String` |
-| Расширяемость | Нет — и не нужна | Новый тип → новый экземпляр |
-
-Параметрический полиморфизм — *более сильная* абстракция: меньше знаний о типе → больше гарантий. Type classes добавляются, когда нужна *специализация* поведения. В главе 19 мы увидим `Contravariant` — «зеркальный» `Functor`, расширяющий эту картину.
-
-## Что такое классы типов
-
-Класс типов (type class) — это набор операций, определённых для некоторого типа. Если тип реализует эти операции (предоставляет экземпляр класса), его можно использовать везде, где ожидается этот класс.
-
-Вспомним оператор `==`:
-
-```text
-> 5 == 5
-True
-
-> "hello" == "world"
-False
-```
-
-Оператор `==` работает и с числами, и со строками, и со списками. Но попробуйте сравнить функции:
-
-```text
-> (\x -> x) == (\x -> x)
-
-<error: No instance for (Eq (Integer -> Integer))>
-```
-
-Ошибка говорит: для типа `Integer -> Integer` нет экземпляра класса `Eq`. Не все типы можно сравнивать — только те, для которых определено, *как* сравнивать.
-
-### Определение класса
-
-Класс объявляется ключевым словом `class`:
+### Основные операции
 
 ```haskell
-class Eq a where
-  (==) :: a -> a -> Bool
-  (/=) :: a -> a -> Bool
-  x /= y = not (x == y)  -- реализация по умолчанию
+-- Преобразование String <-> Text
+T.pack   :: String -> Text
+T.unpack :: Text -> String
+
+-- Длина
+T.length :: Text -> Int
+
+-- Конкатенация
+T.append    :: Text -> Text -> Text    -- или оператор (<>)
+T.concat    :: [Text] -> Text
+T.intercalate :: Text -> [Text] -> Text  -- вставляет разделитель
+
+-- Разбиение и поиск
+T.words     :: Text -> [Text]          -- разбить по пробелам
+T.lines     :: Text -> [Text]          -- разбить по строкам
+T.splitOn   :: Text -> Text -> [Text]  -- разбить по разделителю
+T.isInfixOf :: Text -> Text -> Bool    -- поиск подстроки
+
+-- Преобразование
+T.toUpper :: Text -> Text
+T.toLower :: Text -> Text
+T.strip   :: Text -> Text              -- убрать пробелы по краям
 ```
-
-Здесь:
-
-- `Eq` — имя класса.
-- `a` — переменная типа (параметр).
-- `(==)` и `(/=)` — методы класса.
-- `(/=)` имеет реализацию по умолчанию через `(==)`.
-
-### Экземпляры
-
-Чтобы тип мог использовать операции класса, нужно объявить экземпляр (instance):
-
-```haskell
-data Color = Red | Green | Blue
-
-instance Eq Color where
-  Red   == Red   = True
-  Green == Green = True
-  Blue  == Blue  = True
-  _     == _     = False
-```
-
-Теперь `Color` можно сравнивать:
-
-```text
-> Red == Red
-True
-
-> Red == Blue
-False
-
-> Red /= Green
-True
-```
-
-### Ограничения (constraints)
-
-Когда функция использует операции класса, это отражается в её типе:
-
-```haskell
-elem :: Eq a => a -> [a] -> Bool
-```
-
-`Eq a =>` — ограничение: функция работает только с типами, для которых есть экземпляр `Eq`. Это контракт: «дайте мне тип, который умеет проверять равенство, и я скажу, есть ли элемент в списке».
-
-Можно комбинировать несколько ограничений:
-
-```haskell
-showMax :: (Ord a, Show a) => a -> a -> String
-showMax x y = show (max x y)
-```
-
-### Вывод типов (Type Inference)
-
-Вы могли заметить, что Haskell часто не требует аннотаций типов — компилятор сам выводит их. Это заслуга алгоритма **Hindley-Milner** (Algorithm W).
-
-Рассмотрим выражение `\f x -> f x`. Как GHC выводит его тип?
-
-1. Вводим свежие переменные: `f :: t0`, `x :: t1`, результат `f x :: t2`.
-2. Из применения `f x` следует ограничение: `t0 ~ (t1 -> t2)`.
-3. Унификация: подставляем `t0 = t1 -> t2`.
-4. Обобщение: `(a -> b) -> a -> b` — это тип `($)`!
-
-На практике вам не нужно знать детали алгоритма, но важно понимать *когда аннотации необходимы*:
-
-- **Polymorphic recursion** — функция вызывает себя с другим типом аргумента.
-- **RankNTypes** — полиморфизм внутри аргумента.
-- **Ambiguity** — когда тип нельзя определить из контекста (как `read "42"` без аннотации).
-
-#### Monomorphism restriction
-
-Без сигнатуры типа GHC иногда «сужает» полиморфный тип до конкретного:
-
-```haskell
--- Без сигнатуры:
-plusOne = (+1)
--- GHC может вывести: plusOne :: Integer -> Integer (не полиморфный!)
-
--- С сигнатурой:
-plusOne :: Num a => a -> a
-plusOne = (+1)  -- полиморфный
-```
-
-Это называется **monomorphism restriction** — оптимизация, которая предотвращает случайное повторное вычисление словарей type classes. В GHCi она отключена, в скомпилированном коде — включена по умолчанию.
-
-```admonish tip title="Type holes — ваш лучший друг"
-Не знаете, какой тип подставить? Используйте `_` — GHC сам скажет:
-
-    bar :: [Int] -> Int
-    bar xs = foldr _todo 0 xs
-    -- GHC: Found hole '_todo' with type: Int -> Int -> Int
-
-Type holes (`_`) — мощнейший инструмент разработки. Вместо угадывания типов —
-позвольте компилятору помочь.
-```
-
-## Стандартные классы типов
-
-### `Eq` — равенство
-
-```haskell
-class Eq a where
-  (==) :: a -> a -> Bool
-  (/=) :: a -> a -> Bool
-```
-
-Минимальное определение: `(==)` или `(/=)` — второй метод выводится автоматически.
-
-### `Ord` — сравнение
-
-```haskell
-class Eq a => Ord a where
-  compare :: a -> a -> Ordering  -- LT | EQ | GT
-  (<), (<=), (>), (>=) :: a -> a -> Bool
-  max, min :: a -> a -> a
-```
-
-Обратите внимание: `Eq a =>` в заголовке означает, что `Ord` *наследует* `Eq`. Каждый тип с `Ord` автоматически имеет и `Eq`.
-
-```text
-> compare 3 5
-LT
-
-> max "abc" "abd"
-"abd"
-```
-
-### `Show` — преобразование в строку
-
-```haskell
-class Show a where
-  show :: a -> String
-```
-
-```text
-> show 42
-"42"
-
-> show True
-"True"
-
-> show [1, 2, 3]
-"[1,2,3]"
-```
-
-### `Read` — разбор строки
-
-```haskell
-read :: Read a => String -> a
-```
-
-`read` — обратная операция к `show`:
-
-```text
-> read "42" :: Int
-42
-
-> read "[1,2,3]" :: [Int]
-[1,2,3]
-```
-
-Аннотация типа `:: Int` необходима — без неё Haskell не знает, *какой* тип прочитать.
-
-### `Enum` и `Bounded`
-
-`Enum` — типы с последовательными значениями:
-
-```text
-> [1..5]
-[1,2,3,4,5]
-
-> ['a'..'e']
-"abcde"
-
-> succ 'A'
-'B'
-```
-
-`Bounded` — типы с минимальным и максимальным значением:
-
-```text
-> minBound :: Bool
-False
-
-> maxBound :: Bool
-True
-
-> minBound :: Char
-'\NUL'
-```
-
-## Собственный класс типов
-
-Определим класс для хэширования — преобразования значения в целое число:
-
-```haskell
-class Hashable a where
-  hash :: a -> Int
-```
-
-Минимальное определение — один метод `hash`. Напишем экземпляры для базовых типов:
-
-```haskell
-instance Hashable Int where
-  hash = id
-
-instance Hashable Bool where
-  hash True  = 1
-  hash False = 0
-
-instance Hashable Char where
-  hash = fromEnum
-```
-
-Вспомогательная функция для комбинирования хэшей:
-
-```haskell
-combineHashes :: Int -> Int -> Int
-combineHashes h1 h2 = h1 * 31 + h2
-```
-
-Множитель 31 — классический приём из хэш-функции Java, дающий хорошее распределение значений.
-
-Теперь можно хэшировать:
-
-```text
-> hash (42 :: Int)
-42
-
-> hash True
-1
-
-> hash 'A'
-65
-```
-
-### Экземпляр с ограничением
-
-Для пар, где оба компонента хэшируемы:
-
-```haskell
-instance (Hashable a, Hashable b) => Hashable (a, b) where
-  hash (a, b) = combineHashes (hash a) (hash b)
-```
-
-Ограничение `(Hashable a, Hashable b) =>` говорит: «мы можем хэшировать пару, если умеем хэшировать каждый из её элементов».
-
-```text
-> hash (True, 'A')
-96
-
-> hash (1 :: Int, False)
-31
-```
-
-## Автоматическая деривация
-
-Писать экземпляры `Eq`, `Show`, `Ord` вручную для каждого типа утомительно. Haskell позволяет генерировать их автоматически:
-
-```haskell
-data Color = Red | Green | Blue
-  deriving (Eq, Ord, Show, Read)
-```
-
-`deriving` создаёт «очевидные» экземпляры:
-
-- `Eq`: конструкторы равны, если они одинаковы.
-- `Ord`: порядок определяется позицией конструктора (`Red < Green < Blue`).
-- `Show`: `show Red` → `"Red"`.
-- `Read`: `read "Red" :: Color` → `Red`.
-
-Стандартно можно деривировать: `Eq`, `Ord`, `Show`, `Read`, `Enum`, `Bounded`, `Functor`, `Foldable`, `Traversable` (последние три — с соответствующими расширениями GHC).
-
-### `DerivingStrategies`
-
-С расширением `DerivingStrategies` (включено в нашем проекте) можно явно указать *стратегию* деривации:
-
-```haskell
-data Color = Red | Green | Blue
-  deriving stock (Eq, Ord, Show, Read, Enum, Bounded)
-```
-
-**`stock`** — стандартная деривация (как без расширения). Работает для встроенного списка классов.
-
-**`newtype`** — для `newtype`-обёрток. Делегирует экземпляр обёрнутому типу:
-
-```haskell
-newtype Age = Age { getAge :: Int }
-  deriving stock (Show)           -- show: "Age {getAge = 25}"
-  deriving newtype (Eq, Ord, Num) -- ==, <, + делегируются Int
-```
-
-```text
-> Age 20 + Age 5
-Age {getAge = 25}
-
-> Age 20 < Age 30
-True
-```
-
-Без `deriving newtype` пришлось бы писать:
-
-```haskell
-instance Num Age where
-  Age a + Age b = Age (a + b)
-  Age a * Age b = Age (a * b)
-  abs (Age a) = Age (abs a)
-  signum (Age a) = Age (signum a)
-  fromInteger = Age . fromInteger
-  negate (Age a) = Age (negate a)
-```
-
-Шесть методов вместо одной строки!
-
-`GeneralizedNewtypeDeriving` — расширение, которое делает `deriving newtype` возможным для произвольных классов (не только стандартных). Оно включено в нашем проекте.
-
-### `anyclass`
-
-Третья стратегия — `anyclass` — использует реализацию по умолчанию всех методов. Она полезна с `DeriveGeneric` и библиотеками типа `aeson`, но выходит за рамки этой главы.
-
-## Введение в `Functor`, `Foldable`, `Traversable`
-
-Три класса, которые обобщают операции на «контейнерах». Мы кратко познакомимся с ними здесь; подробнее — в главе 7.
-
-Но сначала разберём важное понятие, без которого эти классы не получится понять до конца.
-
-### Кайнды (Kinds)
-
-Типы в Haskell сами имеют «типы» — они называются **кайндами** (kinds). Кайнд описывает, сколько аргументов ожидает конструктор типа.
-
-- **`Type`** (он же `*`) — кайнд конкретных типов, которые могут иметь значения:
-
-    ```text
-    Int    :: Type
-    Bool   :: Type
-    String :: Type
-    ```
-
-- **`Type -> Type`** — кайнд конструкторов типов, принимающих один аргумент:
-
-    ```text
-    Maybe  :: Type -> Type      -- Maybe Int :: Type, Maybe String :: Type
-    []     :: Type -> Type      -- [Int] :: Type
-    IO     :: Type -> Type      -- IO () :: Type
-    ```
-
-- **`Type -> Type -> Type`** — кайнд конструкторов с двумя параметрами:
-
-    ```text
-    Either :: Type -> Type -> Type   -- Either String Int :: Type
-    (,)    :: Type -> Type -> Type   -- (Int, Bool) :: Type
-    Map    :: Type -> Type -> Type   -- Map String Int :: Type
-    ```
-
-Почему это важно? Классы типов ожидают аргументы определённого кайнда. Например, `Functor` требует `f :: Type -> Type`:
-
-```text
-instance Functor Maybe       -- ОК: Maybe :: Type -> Type
-instance Functor []          -- ОК: [] :: Type -> Type
-instance Functor Int          -- Ошибка! Int :: Type, а нужен Type -> Type
-```
-
-Конструкторы типов можно **частично применять**, как и функции. `Either` имеет кайнд `Type -> Type -> Type`, но если зафиксировать первый аргумент:
-
-```text
-Either String :: Type -> Type
-```
-
-Поэтому `instance Functor (Either String)` допустим — `Either String` имеет нужный кайнд.
-
-В GHCi можно узнать кайнд любого типа командой `:kind` (или `:k`):
-
-```text
-> :kind Int
-Int :: *
-
-> :kind Maybe
-Maybe :: * -> *
-
-> :kind Either
-Either :: * -> * -> *
-
-> :kind Either String
-Either String :: *-> *
-```
-
-GHCi показывает `*` вместо `Type` — это синонимы.
-
-### `Functor`
-
-```haskell
-class Functor f where
-  fmap :: (a -> b) -> f a -> f b
-```
-
-`fmap` — обобщённый `map`. Работает не только со списками:
-
-```text
-> fmap (+1) [1, 2, 3]
-[2,3,4]
-
-> fmap (*2) (Just 5)
-Just 10
-
-> fmap show (Right 42 :: Either String Int)
-Right "42"
-```
-
-Оператор `<$>` — инфиксный синоним `fmap`:
-
-```text
-> (*2) <$> Just 5
-Just 10
-```
-
-```admonish note title="Что дальше"
-`Functor` трансформирует *содержимое* контейнера. Но что если тип не содержит `a`,
-а *потребляет* его (например, `Predicate a = a -> Bool`)? Для таких типов существует
-«зеркальный» `Functor` — `Contravariant`. Подробнее — в главе 19.
-```
-
-### `Foldable`
-
-```haskell
-class Foldable t where
-  foldr  :: (a -> b -> b) -> b -> t a -> b
-  foldl' :: (b -> a -> b) -> b -> t a -> b
-  -- ... и другие методы
-```
-
-Обобщение свёрток за пределы списков:
-
-```text
-> sum (Just 5)
-5
-
-> sum Nothing
-0
-
-> length [1, 2, 3]
-3
-```
-
-### `Traversable`
-
-```haskell
-class (Functor t, Foldable t) => Traversable t where
-  traverse :: Applicative f => (a -> f b) -> t a -> f (t b)
-```
-
-`Traversable` объединяет `Functor` и `Foldable`, добавляя возможность «пройти» по структуре с эффектами. Подробнее — в главе 7.
-
-Все три класса можно деривировать:
-
-```haskell
-data Tree a = Leaf a | Branch (Tree a) (Tree a)
-  deriving stock (Show, Eq, Functor, Foldable, Traversable)
-```
-
-## Проект: библиотека хэширования
-
-Модуль `Data.Hashable` определяет класс `Hashable` и экземпляры для базовых типов:
-
-```haskell
-class Hashable a where
-  hash :: a -> Int
-
-combineHashes :: Int -> Int -> Int
-combineHashes h1 h2 = h1 * 31 + h2
-```
-
-Предоставленные экземпляры: `Int`, `Bool`, `Char`, `(a, b)`.
-
-Модуль также экспортирует тип `Coord`:
-
-```haskell
-data Coord = Coord
-  { coordX :: Double
-  , coordY :: Double
-  }
-```
-
-Экземпляры `Eq` и `Show` для `Coord` не определены — это ваше первое упражнение.
 
 Попробуем в GHCi:
 
 ```text
-> import Data.Hashable
+> import Data.Text qualified as T
+> T.intercalate ", " ["Haskell", "OCaml", "Elm"]
+"Haskell, OCaml, Elm"
 
-> hash (42 :: Int)
-42
+> T.words "  слово   ещё   слово  "
+["слово","ещё","слово"]
 
-> hash 'Z'
-90
+> T.toUpper "привет"
+"ПРИВЕТ"
 
-> combineHashes (hash True) (hash 'A')
-96
+> T.length "Haskell"
+7
 ```
+
+```admonish tip title="Знакомый аналог"
+`Text` — аналог `str` в Python (всегда Unicode), `String` в Java или `string` в Go. Операции `T.words`, `T.splitOn`, `T.strip` — прямые аналоги `.split()`, `.split(sep)`, `.strip()` из Python.
+```
+
+## Map — ассоциативные массивы
+
+`Data.Map.Strict` предоставляет тип `Map k v` — ассоциативный массив (словарь), отображающий ключи типа `k` в значения типа `v`. Внутри — сбалансированное двоичное дерево. Операции поиска, вставки и удаления работают за O(log n).
+
+```haskell
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
+```
+
+```admonish tip title="Знакомый аналог"
+`Map` — аналог `dict` в Python, `Map` / обычного объекта в JavaScript, `TreeMap` в Java. Ключевое отличие: ключи должны реализовывать `Ord` (поддерживать сравнение), потому что `Map` основана на дереве.
+```
+
+### Создание
+
+```haskell
+-- Пустой словарь
+Map.empty :: Map k v
+
+-- Из одной пары
+Map.singleton :: k -> v -> Map k v
+
+-- Из списка пар
+Map.fromList :: Ord k => [(k, v)] -> Map k v
+```
+
+```text
+> import Data.Map.Strict qualified as Map
+> let ages = Map.fromList [("Алиса", 30), ("Боб", 25), ("Клара", 28)]
+> ages
+fromList [("Алиса",30),("Боб",25),("Клара",28)]
+```
+
+### Поиск
+
+```haskell
+-- Безопасный поиск — возвращает Maybe
+Map.lookup :: Ord k => k -> Map k v -> Maybe v
+
+-- Поиск с значением по умолчанию
+Map.findWithDefault :: Ord k => v -> k -> Map k v -> v
+
+-- Проверка наличия ключа
+Map.member :: Ord k => k -> Map k v -> Bool
+```
+
+```text
+> Map.lookup "Алиса" ages
+Just 30
+
+> Map.lookup "Дмитрий" ages
+Nothing
+
+> Map.findWithDefault 0 "Дмитрий" ages
+0
+
+> Map.member "Боб" ages
+True
+```
+
+### Вставка и удаление
+
+```haskell
+-- Вставка (перезаписывает старое значение)
+Map.insert :: Ord k => k -> v -> Map k v -> Map k v
+
+-- Удаление
+Map.delete :: Ord k => k -> Map k v -> Map k v
+
+-- Обновление значения (Nothing — удалить, Just — заменить)
+Map.update :: Ord k => (v -> Maybe v) -> k -> Map k v -> Map k v
+
+-- Вставка с объединением (если ключ уже есть)
+Map.insertWith :: Ord k => (v -> v -> v) -> k -> v -> Map k v -> Map k v
+```
+
+```text
+> let ages2 = Map.insert "Дмитрий" 35 ages
+> ages2
+fromList [("Алиса",30),("Боб",25),("Дмитрий",35),("Клара",28)]
+
+> Map.delete "Боб" ages2
+fromList [("Алиса",30),("Дмитрий",35),("Клара",28)]
+```
+
+Обратите внимание: `ages` не изменился. Мы получили *новый* словарь. Это иммутабельная структура данных — как и всё в Haskell.
+
+### Свёртки и преобразования
+
+```haskell
+-- Получить все ключи или значения
+Map.keys   :: Map k v -> [k]
+Map.elems  :: Map k v -> [v]
+Map.toList :: Map k v -> [(k, v)]
+
+-- Количество элементов
+Map.size :: Map k v -> Int
+
+-- Применить функцию ко всем значениям
+Map.map :: (a -> b) -> Map k a -> Map k b
+
+-- Отфильтровать по значению
+Map.filter :: (v -> Bool) -> Map k v -> Map k v
+
+-- Свёртка
+Map.foldlWithKey' :: (a -> k -> v -> a) -> a -> Map k v -> a
+```
+
+```text
+> Map.keys ages
+["Алиса","Боб","Клара"]
+
+> Map.map (+1) ages
+fromList [("Алиса",31),("Боб",26),("Клара",29)]
+
+> Map.filter (>= 28) ages
+fromList [("Алиса",30),("Клара",28)]
+
+> Map.size ages
+3
+```
+
+### Подсчёт частоты слов — практический пример
+
+`Map` отлично подходит для подсчёта вхождений. Ключевая функция — `insertWith`:
+
+```haskell
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
+import Data.Text (Text)
+import Data.Text qualified as T
+
+wordFrequency :: Text -> Map Text Int
+wordFrequency = foldl' countWord Map.empty . T.words
+  where
+    countWord acc word = Map.insertWith (+) (T.toLower word) 1 acc
+```
+
+```text
+> wordFrequency "кот кот пёс кот пёс рыба"
+fromList [("кот",3),("пёс",2),("рыба",1)]
+```
+
+`Map.insertWith (+) word 1 acc` работает так: если `word` ещё нет в `acc`, вставляет `1`. Если есть со значением `n`, заменяет на `(+) 1 n = n + 1`.
+
+## Set — множества
+
+`Data.Set` предоставляет тип `Set a` — множество уникальных элементов. Как и `Map`, реализовано на сбалансированном дереве; требует `Ord` от элементов.
+
+```haskell
+import Data.Set (Set)
+import Data.Set qualified as Set
+```
+
+```admonish tip title="Знакомый аналог"
+`Set` — аналог `set()` в Python, `Set` в JavaScript, `TreeSet` в Java. Элементы уникальны, порядок определяется экземпляром `Ord`.
+```
+
+### Основные операции
+
+```haskell
+-- Создание
+Set.empty     :: Set a
+Set.singleton :: a -> Set a
+Set.fromList  :: Ord a => [a] -> Set a
+
+-- Вставка и удаление
+Set.insert :: Ord a => a -> Set a -> Set a
+Set.delete :: Ord a => a -> Set a -> Set a
+
+-- Проверка принадлежности
+Set.member :: Ord a => a -> Set a -> Bool
+Set.size   :: Set a -> Int
+Set.null   :: Set a -> Bool
+
+-- Теоретико-множественные операции
+Set.union        :: Ord a => Set a -> Set a -> Set a
+Set.intersection :: Ord a => Set a -> Set a -> Set a
+Set.difference   :: Ord a => Set a -> Set a -> Set a
+
+-- Преобразования
+Set.toList :: Set a -> [a]
+Set.map    :: Ord b => (a -> b) -> Set a -> Set b
+Set.filter :: (a -> Bool) -> Set a -> Set a
+```
+
+Главное отличие от списков: `Set.fromList` автоматически устраняет дубликаты, а все операции вставки и поиска работают за O(log n). Попробуем в GHCi — заметьте, что второй `"Haskell"` исчезает при создании множества:
+
+```text
+> import Data.Set qualified as Set
+> let langs = Set.fromList ["Haskell", "OCaml", "Elm", "Haskell"]
+> langs
+fromList ["Elm","Haskell","OCaml"]
+
+> Set.member "Haskell" langs
+True
+
+> Set.member "Rust" langs
+False
+
+> let moreLangs = Set.fromList ["Rust", "Haskell", "Idris"]
+> Set.union langs moreLangs
+fromList ["Elm","Haskell","Idris","OCaml","Rust"]
+
+> Set.intersection langs moreLangs
+fromList ["Haskell"]
+```
+
+`Set.union` объединяет два множества без дубликатов. `Set.intersection` возвращает только общие элементы. `Set.difference a b` — элементы, которые есть в `a`, но нет в `b`. Все операции иммутабельны: исходные множества не изменяются.
+
+## Какую структуру выбрать
+
+Haskell предлагает несколько контейнеров. Краткая сводка:
+
+| Структура | Модуль | Ключ/элемент | Поиск | Когда использовать |
+|-----------|--------|-------------|-------|--------------------|
+| `[a]` | `Prelude` | — | O(n) | Маленькие коллекции, ленивые потоки, паттерн-матчинг |
+| `Map k v` | `Data.Map.Strict` | `Ord k` | O(log n) | Ассоциативный массив с произвольным ключом |
+| `Set a` | `Data.Set` | `Ord a` | O(log n) | Уникальные элементы, пересечения, объединения |
+| `IntMap v` | `Data.IntMap.Strict` | `Int` | O(log n)* | Словарь с целочисленным ключом (быстрее `Map Int v`) |
+| `HashMap k v` | `Data.HashMap.Strict` | `Hashable k` | O(1) ср. | Когда нужна скорость хэш-таблицы (пакет `unordered-containers`) |
+| `HashSet a` | `Data.HashSet` | `Hashable a` | O(1) ср. | Аналог `Set`, но на хэш-таблице |
+| `Vector a` | `Data.Vector` | — | O(1) индекс | Массив с произвольным доступом по индексу |
+
+*`IntMap` использует patricia trie и на практике быстрее `Map Int v` в 2–5 раз.
+
+```admonish note title="Что выбрать по умолчанию"
+Для большинства задач `Map` и `Set` из `containers` (входит в стандартную поставку GHC) — отличный выбор. `HashMap` и `HashSet` из `unordered-containers` стоит использовать, когда профилировщик показывает, что `Map` — узкое место. `Vector` нужен, когда важен доступ по индексу — например, для числовых вычислений.
+```
+
+## Обновляем трекер задач
+
+Теперь у нас достаточно инструментов, чтобы серьёзно улучшить модель трекера задач. Вместо `[Task]` мы будем хранить задачи в `Map TaskId Task`, а теги представим как `Set Tag`.
+
+### Новые типы
+
+```haskell
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
+import Data.Set (Set)
+import Data.Set qualified as Set
+import Data.Text (Text)
+import Data.Text qualified as T
+
+type Tag = Text
+type TaskId = Int
+
+data Priority = Low | Medium | High
+  deriving (Show, Eq, Ord)
+
+data Status = Todo | InProgress | Done
+  deriving (Show, Eq, Ord)
+
+data Task = Task
+  { taskTitle       :: Text
+  , taskDescription :: Text
+  , taskPriority    :: Priority
+  , taskStatus      :: Status
+  , taskTags        :: Set Tag
+  } deriving (Show, Eq)
+
+newtype TaskStore = TaskStore { unTaskStore :: Map TaskId Task }
+  deriving (Show, Eq)
+```
+
+Что изменилось:
+
+- `taskTitle` и `taskDescription` теперь `Text`, а не `String`.
+- Вместо `[String]` для тегов — `Set Tag` (теги уникальны по определению).
+- `TaskStore` — обёртка над `Map TaskId Task`. Каждая задача имеет уникальный числовой идентификатор.
+
+### Базовые операции
+
+```haskell
+emptyStore :: TaskStore
+emptyStore = TaskStore Map.empty
+
+addTask :: TaskId -> Task -> TaskStore -> TaskStore
+addTask tid task (TaskStore m) = TaskStore (Map.insert tid task m)
+
+removeTask :: TaskId -> TaskStore -> TaskStore
+removeTask tid (TaskStore m) = TaskStore (Map.delete tid m)
+
+getTask :: TaskId -> TaskStore -> Maybe Task
+getTask tid (TaskStore m) = Map.lookup tid m
+```
+
+Обратите внимание, как паттерн-матчинг на `TaskStore m` разворачивает `newtype`, а результат заворачивает обратно. Каждая функция — чистая, без побочных эффектов.
+
+### Поиск по тегу
+
+```haskell
+findByTag :: Tag -> TaskStore -> [Task]
+findByTag tag (TaskStore m) =
+  Map.elems (Map.filter hasTag m)
+  where
+    hasTag task = Set.member tag (taskTags task)
+```
+
+`Map.filter` отбирает элементы по предикату, `Map.elems` извлекает значения. Результат — список задач, у которых указанный тег присутствует в множестве `taskTags`.
+
+### Сбор всех тегов
+
+```haskell
+allTags :: TaskStore -> Set Tag
+allTags (TaskStore m) =
+  Map.foldl' (\acc task -> Set.union acc (taskTags task)) Set.empty m
+```
+
+Свёртка по всем задачам, на каждом шаге объединяем множество тегов текущей задачи с аккумулятором. Результат — множество всех тегов, которые встречаются хотя бы в одной задаче.
+
+### Пример использования
+
+```text
+> let t1 = Task "Изучить Map" "Data.Map.Strict" High Todo (Set.fromList ["haskell", "обучение"])
+> let t2 = Task "Написать тесты" "hspec" Medium Todo (Set.fromList ["haskell", "тесты"])
+> let t3 = Task "Купить молоко" "" Low Todo Set.empty
+
+> let store = addTask 1 t1 . addTask 2 t2 . addTask 3 t3 $ emptyStore
+> getTask 2 store
+Just (Task {taskTitle = "Написать тесты", ...})
+
+> findByTag "haskell" store
+[Task {taskTitle = "Изучить Map", ...}, Task {taskTitle = "Написать тесты", ...}]
+
+> allTags store
+fromList ["haskell","обучение","тесты"]
+
+> removeTask 3 store
+TaskStore {unTaskStore = fromList [(1,...),(2,...)]}
+```
+
+Обратите внимание на цепочку `addTask 1 t1 . addTask 2 t2 . addTask 3 t3 $ emptyStore`. Каждая функция `addTask id task` — это `TaskStore -> TaskStore`, и мы составляем их через композицию `(.)`.
 
 ## Упражнения
 
 Решения пишите в `test/MySolutions.hs`. Проверяйте: `stack test`.
 
-1. **(Среднее)** Напишите экземпляры `Eq` и `Show` для типа `Coord` вручную (без `deriving`).
+### Проект ★☆☆
 
-    - `Eq`: две координаты равны, если совпадают оба поля.
-    - `Show`: формат `"(x, y)"` — например, `show (Coord 1.0 2.0)` → `"(1.0, 2.0)"`.
-
-    ```haskell
-    instance Eq Coord where ...
-    instance Show Coord where ...
-    ```
-
-2. **(Среднее)** Напишите экземпляры `Hashable` для `Maybe a`, `Either a b` и `[a]`.
+1. Реализуйте функцию `storeSize`, которая возвращает количество задач в хранилище.
 
     ```haskell
-    instance Hashable a => Hashable (Maybe a) where ...
-    instance (Hashable a, Hashable b) => Hashable (Either a b) where ...
-    instance Hashable a => Hashable [a] where ...
-    ```
-
-    *Подсказка:* используйте `combineHashes` для комбинирования тега конструктора с хэшем содержимого. Для `Nothing` верните `0`. Для списка используйте `foldl'`.
-
-3. **(Среднее)** Реализуйте функцию `nubByHash`, которая удаляет дубликаты из списка.
-
-    ```haskell
-    nubByHash :: (Eq a, Hashable a) => [a] -> [a]
+    storeSize :: TaskStore -> Int
     ```
 
     ```text
-    > nubByHash [1, 2, 3, 1, 2 :: Int]
-    [1,2,3]
+    > storeSize emptyStore
+    0
+    > storeSize (addTask 1 t1 emptyStore)
+    1
     ```
 
-    *Подсказка:* используйте аккумулятор для хранения уже встреченных элементов.
-
-4. **(Лёгкое)** В `MySolutions.hs` определён тип:
+2. Реализуйте функцию `updateTaskStatus`, которая изменяет статус задачи по её идентификатору. Если задачи с таким `TaskId` нет, хранилище не изменяется.
 
     ```haskell
-    newtype Brightness = Brightness { getBrightness :: Int }
+    updateTaskStatus :: TaskId -> Status -> TaskStore -> TaskStore
     ```
 
-    Под ним — шесть шаблонных экземпляров с `undefined`. Замените всё это на `DerivingStrategies`:
+    *Подсказка:* используйте `Map.adjust` — она применяет функцию к значению по ключу, если ключ существует.
 
-    - `Show` — стратегия `stock` (показывает имя конструктора).
-    - `Eq`, `Ord`, `Num`, `Hashable` — стратегия `newtype` (делегирует `Int`).
+### Проект ★★☆
 
-    Результат — две строки `deriving` вместо двадцати строк шаблонного кода.
+3. Реализуйте функцию `findByTag`, которая возвращает список всех задач, содержащих данный тег.
+
+    ```haskell
+    findByTag :: Tag -> TaskStore -> [Task]
+    ```
+
+    *Подсказка:* используйте `Map.filter` и `Map.elems`. Для проверки принадлежности тега — `Set.member`.
+
+### Практика ★☆☆
+
+4. Реализуйте функцию `invertMap`, которая меняет местами ключи и значения в `Map`. Если несколько ключей имеют одинаковое значение, сохраняется любой из них.
+
+    ```haskell
+    invertMap :: (Ord k, Ord v) => Map k v -> Map v k
+    ```
+
+    ```text
+    > invertMap (Map.fromList [("a", 1), ("b", 2), ("c", 3)])
+    fromList [(1,"a"),(2,"b"),(3,"c")]
+    ```
+
+    *Подсказка:* `Map.toList`, `map`, `Map.fromList`.
+
+5. Реализуйте функцию `commonElements`, которая возвращает общие элементы двух списков (без дубликатов).
+
+    ```haskell
+    commonElements :: Ord a => [a] -> [a] -> [a]
+    ```
+
+    ```text
+    > commonElements [1,2,3,2] [2,3,4,3]
+    [2,3]
+    ```
+
+    *Подсказка:* преобразуйте списки в `Set`, используйте `Set.intersection`, результат преобразуйте обратно.
+
+### Практика ★★☆
+
+6. Реализуйте функцию `wordFrequency`, которая считает частоту слов в тексте. Регистр не учитывается.
+
+    ```haskell
+    wordFrequency :: Text -> Map Text Int
+    ```
+
+    ```text
+    > wordFrequency "кот Кот пёс кот Пёс рыба"
+    fromList [("кот",3),("пёс",2),("рыба",1)]
+    ```
+
+    *Подсказка:* `T.words` разбивает текст на слова, `T.toLower` приводит к нижнему регистру, `Map.insertWith (+)` увеличивает счётчик.
 
 ## Заключение
 
-В этой главе мы:
+Мы прошли путь от «работает» до «работает правильно»: `Text` заменил `String` для эффективной работы с текстом, `Map` обеспечил O(log n) поиск, вставку и удаление, а `Set` — уникальность элементов и теоретико-множественные операции. Квалифицированные импорты (`import Data.Map.Strict qualified as Map`) стали стандартным паттерном для работы с контейнерами. Трекер задач обновлён: `Map TaskId Task` для хранения, `Set Tag` для тегов.
 
-- Разграничили параметрический и ad-hoc полиморфизм; узнали о свободных теоремах.
-- Узнали, что классы типов — механизм ad-hoc полиморфизма: одна операция, много реализаций.
-- Познакомились со стандартными классами: `Eq`, `Ord`, `Show`, `Read`, `Enum`, `Bounded`.
-- Научились определять собственные классы и писать экземпляры.
-- Разобрали вывод типов (Hindley-Milner), monomorphism restriction и type holes.
-- Освоили `deriving` и `DerivingStrategies` (`stock`, `newtype`).
-- Разобрали кайнды (kinds) — «типы типов», необходимые для понимания `Functor` и других параметризованных классов.
-- Получили введение в `Functor`, `Foldable` и `Traversable`.
-- Применили всё это в проекте библиотеки хэширования.
+### Итоги Части I
 
-В следующей главе мы подробнее разберём аппликативные функторы и используем их для валидации данных с накоплением ошибок.
+За шесть глав мы освоили фундамент Haskell:
+
+| Глава | Тема | Ключевые концепции |
+|-------|------|--------------------|
+| 1 | Введение | GHCup, Stack, GHCi, hspec |
+| 2 | Типы и функции | `data`, записи, `Maybe`, каррирование, `(.)`, `($)` |
+| 3 | ADT и паттерн-матчинг | Конструкторы, guards, `where`, `case` |
+| 4 | Списки и свёртки | Рекурсия, `map`, `filter`, `foldr`, `foldl'` |
+| 5 | Классы типов | `class`, `instance`, `deriving`, `Eq`, `Ord`, `Show` |
+| 6 | Структуры данных | `Text`, `Map`, `Set`, квалифицированные импорты |
+
+Наш трекер задач вырос от простого типа `Task` со списком до полноценной модели с хранилищем на `Map`, тегами на `Set` и текстом на `Text`. Но все функции, которые мы написали, — чистые. Трекер не может ничего напечатать, прочитать с клавиатуры или сохранить в файл.
+
+В [следующей главе](chapter07.md) мы добавим ввод-вывод (`IO`) и сделаем трекер интерактивным: пользователь сможет добавлять задачи, просматривать список и отмечать задачи как выполненные — всё через командную строку.
+
+```admonish tip title="Для углубления"
+- **Haskell MOOC** — [haskell.mooc.fi](https://haskell.mooc.fi/), лекция 5: `Data.Map`, `Data.Text` и работа с контейнерами.
+- **MetaLamp** — [education.metalamp.ru](https://education.metalamp.ru/education/haskell/task-1), задание 3: стандартные структуры данных.
+- **Документация `containers`** — [hackage.haskell.org/package/containers](https://hackage.haskell.org/package/containers) — полная документация по `Map`, `Set`, `IntMap`, `Sequence`.
+- **Документация `text`** — [hackage.haskell.org/package/text](https://hackage.haskell.org/package/text) — полный API модуля `Data.Text`.
+```

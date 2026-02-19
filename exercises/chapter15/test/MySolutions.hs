@@ -1,104 +1,185 @@
 module MySolutions where
 
+import Data.Char (toLower)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Text.Megaparsec
-import Text.Megaparsec.Char
-import Text.Megaparsec.Char.Lexer qualified as L
-import Language.Expr (Expr(..))
-import Language.Expr.Parser (Parser, sc, lexeme, symbol, keyword)
-import Language.Json (JValue(..))
+import Data.Text (Text)
+import Data.Text qualified as T
+
+import TaskTracker
 
 -- ============================================================
--- Упражнение 1: Вычислитель выражений (без переменных)
+-- Упражнение 1: Статистика хранилища
 --
--- Реализуйте функцию eval, которая вычисляет арифметические выражения.
--- Обрабатывайте только: Lit, Add, Sub, Mul, Div, Neg.
--- Для Var и Let возвращайте Left с сообщением об ошибке.
--- При делении на ноль возвращайте Left "division by zero".
+-- Определите тип TaskStats и функцию computeStats.
+-- TaskStats содержит: totalTasks, todoCount, doneCount, highPriority.
 -- ============================================================
 
--- | Вычисление выражения без поддержки переменных.
---
--- >>> eval (Add (Lit 1) (Lit 2))
--- Right 3.0
---
--- >>> eval (Div (Lit 10) (Lit 0))
--- Left "division by zero"
-eval :: Expr -> Either String Double
-eval = undefined
+data TaskStats = TaskStats
+  { totalTasks :: Int
+  , todoCount :: Int
+  , doneCount :: Int
+  , highPriority :: Int
+  }
+  deriving (Show, Eq)
+
+{- | Вычислить статистику по хранилищу задач.
+
+>>> computeStats emptyStore
+TaskStats {totalTasks = 0, todoCount = 0, doneCount = 0, highPriority = 0}
+-}
+computeStats :: TaskStore -> TaskStats
+computeStats = undefined
 
 -- ============================================================
--- Упражнение 2: Оптимизатор AST
+-- Упражнение 2: Смарт-конструктор приоритета
 --
--- Реализуйте функцию optimize, которая упрощает выражения
--- по алгебраическим правилам. Применяйте правила рекурсивно
--- (сначала оптимизируйте поддеревья, потом корень).
---
--- Правила:
---   0 + x  →  x          x + 0  →  x
---   0 * x  →  Lit 0      x * 0  →  Lit 0
---   1 * x  →  x          x * 1  →  x
---   x - 0  →  x
---   Neg (Neg x)  →  x
+-- Парсинг строки в Priority. Регистронезависимый:
+-- "low" → Just Low, "medium" → Just Medium, "high" → Just High.
+-- Всё остальное → Nothing.
 -- ============================================================
 
--- | Оптимизация выражения по алгебраическим тождествам.
---
--- >>> optimize (Add (Lit 0) (Var "x"))
--- Var "x"
---
--- >>> optimize (Mul (Lit 1) (Add (Lit 0) (Var "y")))
--- Var "y"
-optimize :: Expr -> Expr
-optimize = undefined
+{- | Смарт-конструктор для Priority.
+
+>>> mkPriority "high"
+Just High
+
+>>> mkPriority "unknown"
+Nothing
+-}
+mkPriority :: String -> Maybe Priority
+mkPriority = undefined
 
 -- ============================================================
--- Упражнение 3: Парсер JSON
+-- Упражнение 3: Парсинг команд
 --
--- Реализуйте парсер JSON-подмножества на megaparsec.
--- Поддерживаемые значения: null, true, false, числа, строки,
--- массивы и объекты.
---
--- Используйте утилиты из Language.Expr.Parser:
---   sc, lexeme, symbol, keyword
---
--- Полезные комбинаторы megaparsec:
---   between, sepBy, manyTill
---   char, string, digitChar, letterChar
---   L.decimal, L.float, L.charLiteral
+-- Определите тип Command и функцию parseCommand.
+-- Команды:
+--   "add <текст>"  → AddCmd <текст>
+--   "list"         → ListCmd
+--   "done <число>" → DoneCmd (TaskId <число>)
+--   "delete <число>" → DeleteCmd (TaskId <число>)
+--   "quit"         → QuitCmd
+--   иначе          → Nothing
 -- ============================================================
 
--- | Парсер JSON-значения.
-parseJsonValue :: Parser JValue
-parseJsonValue = undefined
+data Command
+  = AddCmd Text
+  | ListCmd
+  | DoneCmd TaskId
+  | DeleteCmd TaskId
+  | QuitCmd
+  deriving (Show, Eq)
 
--- | Разбирает строку как JSON.
---
--- >>> parseJson "{\"a\": [1, true, null]}"
--- Right (JObject [("a",JArray [JNumber 1.0,JBool True,JNull])])
-parseJson :: String -> Either String JValue
-parseJson input = case parse (sc *> parseJsonValue <* eof) "" input of
-  Left err  -> Left (errorBundlePretty err)
-  Right val -> Right val
+{- | Разбор строки команды.
+
+>>> parseCommand "add Новая задача"
+Just (AddCmd "Новая задача")
+
+>>> parseCommand "list"
+Just ListCmd
+
+>>> parseCommand "done 5"
+Just (DoneCmd (TaskId 5))
+-}
+parseCommand :: String -> Maybe Command
+parseCommand = undefined
 
 -- ============================================================
--- Упражнение 4 (продвинутое): Вычислитель с переменными
+-- Упражнение 4: Отображение задач
 --
--- Расширьте вычислитель для поддержки Var и Let.
---
--- Var x     — найти x в окружении. Если нет, Left "undefined variable: x".
--- Let x e b — вычислить e, добавить x=результат в окружение, вычислить b.
---
--- Используйте Map String Double как окружение (environment).
+-- renderTask  — отформатировать одну задачу: "[id] title (priority, status)"
+-- renderTaskList — отформатировать список через "\n"
+-- renderStats — отформатировать статистику
 -- ============================================================
 
--- | Вычисление выражения с поддержкой переменных.
+{- | Отформатировать одну задачу.
+
+>>> renderTask (TaskId 1, Task "Тест" High Todo)
+"[1] Тест (High, Todo)"
+-}
+renderTask :: (TaskId, Task) -> String
+renderTask = undefined
+
+{- | Отформатировать список задач.
+
+>>> renderTaskList [(TaskId 1, Task "Тест" High Todo)]
+"[1] Тест (High, Todo)"
+-}
+renderTaskList :: [(TaskId, Task)] -> String
+renderTaskList = undefined
+
+{- | Отформатировать статистику.
+
+>>> renderStats (TaskStats 4 2 1 2)
+"Всего: 4, Todo: 2, Done: 1, Высокий приоритет: 2"
+-}
+renderStats :: TaskStats -> String
+renderStats = undefined
+
+-- ============================================================
+-- Упражнение 5: Непустой текст (newtype + смарт-конструктор)
 --
--- >>> evalWithVars Map.empty (Let "x" (Lit 5) (Add (Var "x") (Lit 3)))
--- Right 8.0
+-- Определите newtype NonEmptyText с:
+--   mkNonEmptyText  :: Text -> Maybe NonEmptyText
+--   unNonEmptyText  :: NonEmptyText -> Text
+-- Пустые и пробельные строки отклоняются.
+-- ============================================================
+
+newtype NonEmptyText = NonEmptyText Text
+  deriving (Show, Eq)
+
+{- | Создать NonEmptyText. Отклоняет пустые и пробельные строки.
+
+>>> mkNonEmptyText "hello"
+Just (NonEmptyText "hello")
+
+>>> mkNonEmptyText ""
+Nothing
+-}
+mkNonEmptyText :: Text -> Maybe NonEmptyText
+mkNonEmptyText = undefined
+
+-- | Извлечь текст из NonEmptyText.
+unNonEmptyText :: NonEmptyText -> Text
+unNonEmptyText (NonEmptyText t) = t
+
+-- ============================================================
+-- Упражнение 6: lookupDefault
 --
--- >>> evalWithVars Map.empty (Var "x")
--- Left "undefined variable: x"
-evalWithVars :: Map String Double -> Expr -> Either String Double
-evalWithVars = undefined
+-- Аналог Map.findWithDefault, но с другим порядком аргументов:
+-- lookupDefault defaultValue key map
+-- ============================================================
+
+{- | Поиск значения в Map с значением по умолчанию.
+
+>>> lookupDefault 0 "a" (Map.fromList [("a", 1)])
+1
+
+>>> lookupDefault 0 "z" (Map.fromList [("a", 1)])
+0
+-}
+lookupDefault :: (Ord k) => v -> k -> Map k v -> v
+lookupDefault = undefined
+
+-- ============================================================
+-- Упражнение 7: Парсинг CSV
+--
+-- Формат строки: "title,priority,status"
+-- priority: low, medium, high (регистронезависимый)
+-- status: todo, in_progress, done (регистронезависимый)
+-- Пустая строка → Right []
+-- ============================================================
+
+{- | Парсинг CSV в список задач.
+
+>>> parseCSV "Задача,low,todo"
+Right [Task {taskTitle = "Задача", taskPriority = Low, taskStatus = Todo}]
+-}
+parseCSV :: Text -> Either String [Task]
+parseCSV = undefined
+
+-- ============================================================
+-- Упражнение 8 (не тестируется):
+-- Организация package.yaml — описано в тексте главы.
+-- ============================================================

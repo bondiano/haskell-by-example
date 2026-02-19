@@ -1,85 +1,135 @@
 module MySolutions where
 
-import Test.QuickCheck
-import Data.List (sort)
-import Data.MergeSort (mergeSort, merge, sorted)
-import Data.BST (BST(..), insert, member, toAscList, fromList, valid)
-import Data.Person (Person(..), encodePerson, decodePerson)
+import Data.Aeson
+import Data.Aeson.Types (Parser)
+import Data.ByteString.Lazy qualified as BL
+import Data.Text (Text)
+import GHC.Generics (Generic)
+
+import TaskTracker
 
 -- ============================================================
--- Упражнение 1: Свойства сортировки слиянием
+-- Упражнение 1: Автоматические инстансы для Priority и Status
 --
--- Реализуйте три свойства функции mergeSort.
--- Каждое свойство принимает произвольный список [Int] и возвращает Bool.
--- QuickCheck сгенерирует случайные списки и проверит, что свойство
--- выполняется для каждого из них.
+-- Используйте Generic-деривацию для ToJSON и FromJSON.
+-- Для типов, имеющих deriving Generic, достаточно написать
+-- пустые инстансы.
 -- ============================================================
 
--- | Сортировка не меняет длину списка.
-prop_sortPreservesLength :: [Int] -> Bool
-prop_sortPreservesLength xs = undefined
+instance ToJSON Priority
+instance FromJSON Priority
 
--- | Результат сортировки упорядочен (используйте функцию sorted из Data.MergeSort).
-prop_sortOrdered :: [Int] -> Bool
-prop_sortOrdered xs = undefined
-
--- | Сортировка идемпотентна: повторная сортировка не меняет результат.
-prop_sortIdempotent :: [Int] -> Bool
-prop_sortIdempotent xs = undefined
+instance ToJSON Status
+instance FromJSON Status
 
 -- ============================================================
--- Упражнение 2: Генератор BST и свойства
+-- Упражнение 2: Ручной инстанс для Task
 --
--- Напишите генератор бинарного дерева поиска и два свойства.
--- Используйте forAll для подключения генератора к свойствам.
+-- Напишите РУЧНЫЕ инстансы ToJSON и FromJSON для Task
+-- с короткими ключами: "title", "priority", "status".
 --
--- Подсказка: самый простой способ создать BST — сгенерировать
--- список и построить дерево через fromList.
+-- FromJSON: при отсутствии "priority" — Medium,
+-- при отсутствии "status" — Todo.
+--
+-- Подсказки:
+--   ToJSON: object ["title" .= title, ...]
+--   FromJSON: withObject "Task" $ \v -> Task
+--     <$> v .:  "title"
+--     <*> v .:? "priority" .!= Medium
+--     <*> v .:? "status"   .!= Todo
 -- ============================================================
 
--- | Генератор корректного BST с элементами типа Int.
-genBST :: Gen (BST Int)
-genBST = undefined
+instance ToJSON Task where
+  toJSON = undefined
 
--- | Все деревья из генератора удовлетворяют инварианту BST.
-prop_genBSTValid :: Property
-prop_genBSTValid = undefined
-
--- | После insert x в дерево, member x возвращает True.
-prop_insertMember :: Property
-prop_insertMember = undefined
+instance FromJSON Task where
+  parseJSON = undefined
 
 -- ============================================================
--- Упражнение 3: Round-trip тестирование
+-- Упражнение 3: Тип Person с Generic-инстансами
 --
--- Напишите генератор Person и свойство round-trip для encodePerson/decodePerson.
---
--- Важно: имя не должно содержать символ ';' (это разделитель в encodePerson).
--- Используйте listOf и elements для генерации допустимых символов.
+-- Определите тип Person с полями personName (Text) и personAge (Int).
+-- Используйте Generic-деривацию для ToJSON и FromJSON.
 -- ============================================================
 
--- | Генератор Person с корректным именем (без символа ';').
-genPerson :: Gen Person
-genPerson = undefined
+data Person = Person
+  { personName :: Text
+  , personAge :: Int
+  }
+  deriving (Show, Eq, Generic)
 
--- | decodePerson (encodePerson p) == Just p для всех корректных Person.
-prop_encodeDecodeRoundTrip :: Property
-prop_encodeDecodeRoundTrip = undefined
+instance ToJSON Person
+instance FromJSON Person
 
 -- ============================================================
--- Упражнение 4 (продвинутое): Слияние отсортированных списков
+-- Упражнение 4: encodePerson и decodePerson
 --
--- Напишите свойство для функции merge с использованием:
---   - forAll для подключения генератора отсортированных списков
---   - classify для отслеживания распределения входных данных
---
--- Подсказка: отсортированный список можно получить так:
---   sort <$> arbitrary  или  sort <$> listOf arbitrary
+-- encodePerson: сериализация Person в ByteString (через encode).
+-- decodePerson: десериализация из ByteString (через eitherDecode).
 -- ============================================================
 
--- | Слияние двух отсортированных списков даёт отсортированный список.
--- Используйте classify для разделения на категории:
---   - "один список пуст" — когда хотя бы один список пуст
---   - "большой вход"     — когда суммарная длина > 20
-prop_mergeOrdered :: Property
-prop_mergeOrdered = undefined
+{- | Сериализация Person в JSON.
+
+>>> encodePerson (Person "Алиса" 30)
+"{\"personName\":\"Алиса\",\"personAge\":30}"
+-}
+encodePerson :: Person -> BL.ByteString
+encodePerson = undefined
+
+{- | Десериализация Person из JSON.
+
+>>> decodePerson "{\"personName\":\"Боб\",\"personAge\":25}"
+Right (Person {personName = "Боб", personAge = 25})
+-}
+decodePerson :: BL.ByteString -> Either String Person
+decodePerson = undefined
+
+-- ============================================================
+-- Упражнение 5: Тип Config с ручным FromJSON
+--
+-- Определите тип Config:
+--   configName       :: Text   (обязательное)
+--   configDebug      :: Bool   (по умолчанию False)
+--   configMaxRetries :: Int    (по умолчанию 3)
+--
+-- ToJSON — автоматический (Generic).
+-- FromJSON — ручной, с значениями по умолчанию.
+--
+-- Подсказка: используйте .:? с .!= для значений по умолчанию:
+--   v .:? "configDebug" .!= False
+-- ============================================================
+
+data Config = Config
+  { configName :: Text
+  , configDebug :: Bool
+  , configMaxRetries :: Int
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON Config
+
+instance FromJSON Config where
+  parseJSON = undefined
+
+-- ============================================================
+-- Упражнение 6: encodeTask и decodeTask
+--
+-- Сериализация и десериализация Task.
+-- Используйте ваши ручные инстансы из упражнения 2.
+-- ============================================================
+
+{- | Сериализация Task в JSON.
+
+>>> encodeTask (Task "Купить молоко" High Todo)
+"{\"title\":\"Купить молоко\",\"priority\":\"High\",\"status\":\"Todo\"}"
+-}
+encodeTask :: Task -> BL.ByteString
+encodeTask = undefined
+
+{- | Десериализация Task из JSON.
+
+>>> decodeTask "{\"title\":\"Тест\"}"
+Right (Task {taskTitle = "Тест", taskPriority = Medium, taskStatus = Todo})
+-}
+decodeTask :: BL.ByteString -> Either String Task
+decodeTask = undefined

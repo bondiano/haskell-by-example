@@ -1,0 +1,43 @@
+name: chapter20
+version: 0.1.0.0
+synopsis: "Haskell by Example — Глава 20: Линзы и оптики (lens)"
+license: MIT
+
+default-extensions:
+  - OverloadedStrings
+  - DeriveGeneric
+  - DerivingStrategies
+  - GeneralizedNewtypeDeriving
+  - DeriveFunctor
+  - DeriveFoldable
+  - DeriveTraversable
+  - LambdaCase
+  - ScopedTypeVariables
+  - TypeApplications
+  - NamedFieldPuns
+  - RecordWildCards
+  - TupleSections
+  - NumericUnderscores
+  - ImportQualifiedPost
+  - TemplateHaskell
+  - RankNTypes
+
+dependencies:
+  - base >= 4.18 && < 5
+
+library:
+  source-dirs: src
+  dependencies:
+    - text
+    - containers
+    - lens
+
+tests:
+  chapter20-tests:
+    main: Spec.hs
+    source-dirs: test
+    dependencies:
+      - chapter20
+      - hspec
+      - text
+      - lens

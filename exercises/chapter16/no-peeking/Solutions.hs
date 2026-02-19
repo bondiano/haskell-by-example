@@ -1,76 +1,137 @@
-{-# OPTIONS_GHC -Wno-orphans #-}
-
 module Solutions where
 
-import Data.List (foldl')
-import Data.Map.Strict qualified as Map
-import Data.Set qualified as Set
+import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async
+import Control.Concurrent.MVar
+import Control.Concurrent.STM
 
-import Data.Expr.Typed
-import Data.Vec
-import Data.Container
+-- ============================================================
+-- Упражнение 1: Потокобезопасный счётчик на MVar
+-- ============================================================
 
--- Упражнение 1: eval
+type Counter = MVar Int
 
-eval :: Expr a -> a
-eval (ILit n)   = n
-eval (BLit b)   = b
-eval (Add x y)  = eval x + eval y
-eval (Eql x y)  = eval x == eval y
-eval (If c t e) = if eval c then eval t else eval e
-eval (Not x)    = not (eval x)
-eval (And x y)  = eval x && eval y
-eval (Gt x y)   = eval x > eval y
+-- | Создаём MVar с начальным значением 0.
+newCounter :: IO Counter
+newCounter = newMVar 0
 
--- Упражнение 2: prettyExpr
+-- | modifyMVar_ атомарно читает, модифицирует и записывает значение.
+increment :: Counter -> IO ()
+increment c = modifyMVar_ c (\n -> pure (n + 1))
 
-prettyExpr :: Expr a -> String
-prettyExpr (ILit n)   = show n
-prettyExpr (BLit b)   = show b
-prettyExpr (Add x y)  = "(" <> prettyExpr x <> " + " <> prettyExpr y <> ")"
-prettyExpr (Eql x y)  = "(" <> prettyExpr x <> " == " <> prettyExpr y <> ")"
-prettyExpr (If c t e) = "(if " <> prettyExpr c
-                         <> " then " <> prettyExpr t
-                         <> " else " <> prettyExpr e <> ")"
-prettyExpr (Not x)    = "(not " <> prettyExpr x <> ")"
-prettyExpr (And x y)  = "(" <> prettyExpr x <> " && " <> prettyExpr y <> ")"
-prettyExpr (Gt x y)   = "(" <> prettyExpr x <> " > " <> prettyExpr y <> ")"
+-- | readMVar читает значение без извлечения.
+getCount :: Counter -> IO Int
+getCount = readMVar
 
--- Упражнение 3: Container
+-- ============================================================
+-- Упражнение 2: Таймаут для IO-действия
+-- ============================================================
 
-instance Container [a] where
-  type Elem [a] = a
-  empty = []
-  insert x xs = xs ++ [x]
-  toList = id
+{- | race запускает два действия параллельно.
+Если таймер (threadDelay) завершится первым → Left () → Nothing.
+Если действие завершится первым → Right a → Just a.
+-}
+withTimeout :: Int -> IO a -> IO (Maybe a)
+withTimeout microseconds action = do
+  result <- race (threadDelay microseconds) action
+  case result of
+    Left () -> pure Nothing
+    Right a -> pure (Just a)
 
-instance Ord a => Container (Set.Set a) where
-  type Elem (Set.Set a) = a
-  empty = Set.empty
-  insert = Set.insert
-  toList = Set.toList
+-- ============================================================
+-- Упражнение 3: Параллельная сумма
+-- ============================================================
 
-instance Ord k => Container (Map.Map k v) where
-  type Elem (Map.Map k v) = (k, v)
-  empty = Map.empty
-  insert (k, v) = Map.insert k v
-  toList = Map.toList
+{- | Запускаем pure для каждого элемента конкурентно, затем суммируем.
+Для реально больших списков можно разбить на чанки.
+-}
+parallelSum :: [Int] -> IO Int
+parallelSum xs = sum <$> mapConcurrently pure xs
 
-containerFromList :: Container c => [Elem c] -> c
-containerFromList = foldl' (flip insert) empty
+-- ============================================================
+-- Упражнение 4: STM банковские переводы
+-- ============================================================
 
--- Упражнение 4: Vec
+type Account = TVar Int
 
-vhead :: Vec ('Succ n) a -> a
-vhead (VCons x _) = x
+-- | Создаём TVar с начальным балансом.
+newAccount :: Int -> IO Account
+newAccount = newTVarIO
 
-vtail :: Vec ('Succ n) a -> Vec n a
-vtail (VCons _ xs) = xs
+-- | Атомарно увеличиваем баланс.
+deposit :: Account -> Int -> STM ()
+deposit acc amount = modifyTVar' acc (+ amount)
 
-vzip :: Vec n a -> Vec n b -> Vec n (a, b)
-vzip VNil VNil = VNil
-vzip (VCons a as) (VCons b bs) = VCons (a, b) (vzip as bs)
+-- | Атомарно уменьшаем баланс.
+withdraw :: Account -> Int -> STM ()
+withdraw acc amount = modifyTVar' acc (subtract amount)
 
-vappend :: Vec n a -> Vec m a -> Vec (Add n m) a
-vappend VNil ys = ys
-vappend (VCons x xs) ys = VCons x (vappend xs ys)
+{- | Перевод — это снятие с одного и зачисление на другой
+в одной STM-транзакции (атомарно).
+-}
+transfer :: Account -> Account -> Int -> STM ()
+transfer from to amount = do
+  withdraw from amount
+  deposit to amount
+
+-- ============================================================
+-- Упражнение 5: parallelMap
+-- ============================================================
+
+{- | mapConcurrently запускает все действия параллельно
+и собирает результаты в том же порядке.
+-}
+parallelMap :: (a -> IO b) -> [a] -> IO [b]
+parallelMap = mapConcurrently
+
+-- ============================================================
+-- Упражнение 6: Логгер на TChan
+-- ============================================================
+
+type Logger = TChan String
+
+-- | Создаём новый TChan.
+newLogger :: IO Logger
+newLogger = newTChanIO
+
+-- | Записываем сообщение в канал.
+logMessage :: Logger -> String -> IO ()
+logMessage logger msg = atomically $ writeTChan logger msg
+
+{- | Читаем все сообщения из канала (tryReadTChan возвращает Nothing,
+когда канал пуст).
+-}
+flushLog :: Logger -> IO [String]
+flushLog logger = atomically $ flushTChan logger
+ where
+  flushTChan :: TChan a -> STM [a]
+  flushTChan chan = do
+    mval <- tryReadTChan chan
+    case mval of
+      Nothing -> pure []
+      Just val -> (val :) <$> flushTChan chan
+
+-- ============================================================
+-- Упражнение 7: Гонка нескольких действий
+-- ============================================================
+
+{- | Запускаем все действия через async, ждём первое завершившееся
+через waitAnyCancel (отменяет остальные).
+-}
+raceAll :: [IO a] -> IO a
+raceAll [] = error "raceAll: пустой список действий"
+raceAll actions = do
+  asyncs <- mapM async actions
+  (_, result) <- waitAnyCancel asyncs
+  pure result
+
+-- ============================================================
+-- Упражнение 8: Пул воркеров (не тестируется)
+-- ============================================================
+
+-- workerPool :: Int -> TChan (IO ()) -> IO ()
+-- workerPool n chan = do
+--   let worker = forever $ do
+--         action <- atomically $ readTChan chan
+--         action
+--   mapConcurrently_ (const worker) [1..n]

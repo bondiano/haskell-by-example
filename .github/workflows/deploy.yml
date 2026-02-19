@@ -25,6 +25,9 @@ jobs:
         with:
           mdbook-version: latest
 
+      - name: Install mdbook-admonish
+        run: cargo install mdbook-admonish
+
       - name: Build book
         run: mdbook build
 

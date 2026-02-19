@@ -1,6 +1,6 @@
 name: chapter13
 version: 0.1.0.0
-synopsis: "Haskell by Example — Глава 13: Графика"
+synopsis: "Haskell by Example — Глава 13: Трансформеры и mtl"
 license: MIT
 
 default-extensions:
@@ -22,10 +22,13 @@ default-extensions:
 
 dependencies:
   - base >= 4.18 && < 5
-  - containers
 
 library:
   source-dirs: src
+  dependencies:
+    - containers
+    - mtl
+    - transformers
 
 tests:
   chapter13-tests:
@@ -34,3 +37,6 @@ tests:
     dependencies:
       - chapter13
       - hspec
+      - containers
+      - mtl
+      - transformers

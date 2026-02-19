@@ -1,139 +1,138 @@
-{-# OPTIONS_GHC -Wno-orphans #-}
-
 module Main where
 
+import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (mapConcurrently_)
+import Control.Concurrent.MVar
+import Control.Concurrent.STM
 import Test.Hspec
-import Data.Map.Strict qualified as Map
-import Data.Set qualified as Set
 
-import Data.Expr.Typed
-import Data.Vec
-import Data.Container
 import MySolutions
 
 main :: IO ()
 main = hspec $ do
-  describe "eval (упражнение 1)" $ do
-    it "целочисленный литерал" $
-      eval (ILit 42) `shouldBe` 42
+  describe "Упражнение 1: Counter (MVar)" $ do
+    it "новый счётчик начинается с 0" $ do
+      c <- newCounter
+      getCount c `shouldReturn` 0
 
-    it "булев литерал" $
-      eval (BLit True) `shouldBe` True
+    it "инкремент увеличивает счётчик" $ do
+      c <- newCounter
+      increment c
+      increment c
+      increment c
+      getCount c `shouldReturn` 3
 
-    it "сложение" $
-      eval (Add (ILit 3) (ILit 4)) `shouldBe` 7
+    it "1000 конкурентных инкрементов" $ do
+      c <- newCounter
+      mapConcurrently_ (\_ -> increment c) [1 .. 1000 :: Int]
+      getCount c `shouldReturn` 1000
 
-    it "равенство (True)" $
-      eval (Eql (ILit 5) (ILit 5)) `shouldBe` True
+  describe "Упражнение 2: withTimeout" $ do
+    it "быстрое действие возвращает Just" $ do
+      result <- withTimeout 1_000_000 (pure (42 :: Int))
+      result `shouldBe` Just 42
 
-    it "равенство (False)" $
-      eval (Eql (ILit 1) (ILit 2)) `shouldBe` False
+    it "медленное действие возвращает Nothing" $ do
+      result <- withTimeout 50_000 (threadDelay 1_000_000 >> pure (42 :: Int))
+      result `shouldBe` Nothing
 
-    it "условное выражение (then)" $
-      eval (If (BLit True) (ILit 1) (ILit 2)) `shouldBe` 1
+  describe "Упражнение 3: parallelSum" $ do
+    it "сумма пустого списка" $
+      parallelSum [] `shouldReturn` 0
 
-    it "условное выражение (else)" $
-      eval (If (BLit False) (ILit 1) (ILit 2)) `shouldBe` 2
+    it "сумма одного элемента" $
+      parallelSum [42] `shouldReturn` 42
 
-    it "отрицание" $
-      eval (Not (BLit True)) `shouldBe` False
+    it "сумма нескольких элементов" $
+      parallelSum [1, 2, 3, 4, 5] `shouldReturn` 15
 
-    it "логическое и" $
-      eval (And (BLit True) (BLit False)) `shouldBe` False
+    it "сумма с отрицательными числами" $
+      parallelSum [10, -3, 5, -2] `shouldReturn` 10
 
-    it "больше" $
-      eval (Gt (ILit 5) (ILit 3)) `shouldBe` True
+  describe "Упражнение 4: STM банковские переводы" $ do
+    it "создание счёта с начальным балансом" $ do
+      acc <- newAccount 100
+      bal <- readTVarIO acc
+      bal `shouldBe` 100
 
-    it "сложное выражение" $
-      eval (If (And (Gt (ILit 10) (ILit 5)) (Not (BLit False)))
-               (Add (ILit 1) (ILit 2))
-               (ILit 0))
-        `shouldBe` 3
+    it "deposit увеличивает баланс" $ do
+      acc <- newAccount 100
+      atomically $ deposit acc 50
+      readTVarIO acc `shouldReturn` 150
 
-  describe "prettyExpr (упражнение 2)" $ do
-    it "целочисленный литерал" $
-      prettyExpr (ILit 42) `shouldBe` "42"
+    it "withdraw уменьшает баланс" $ do
+      acc <- newAccount 100
+      atomically $ withdraw acc 30
+      readTVarIO acc `shouldReturn` 70
 
-    it "булев литерал" $
-      prettyExpr (BLit True) `shouldBe` "True"
+    it "transfer перемещает средства между счетами" $ do
+      acc1 <- newAccount 100
+      acc2 <- newAccount 100
+      atomically $ transfer acc1 acc2 30
+      bal1 <- readTVarIO acc1
+      bal2 <- readTVarIO acc2
+      bal1 `shouldBe` 70
+      bal2 `shouldBe` 130
 
-    it "сложение" $
-      prettyExpr (Add (ILit 1) (ILit 2)) `shouldBe` "(1 + 2)"
+    it "сумма балансов сохраняется после перевода" $ do
+      acc1 <- newAccount 200
+      acc2 <- newAccount 300
+      atomically $ transfer acc1 acc2 50
+      bal1 <- readTVarIO acc1
+      bal2 <- readTVarIO acc2
+      (bal1 + bal2) `shouldBe` 500
 
-    it "равенство" $
-      prettyExpr (Eql (ILit 1) (ILit 2)) `shouldBe` "(1 == 2)"
+  describe "Упражнение 5: parallelMap" $ do
+    it "применяет функцию к каждому элементу" $
+      parallelMap (pure . (+ 1)) [1, 2, 3 :: Int] `shouldReturn` [2, 3, 4]
 
-    it "условное выражение" $
-      prettyExpr (If (BLit True) (ILit 1) (ILit 2))
-        `shouldBe` "(if True then 1 else 2)"
+    it "пустой список" $
+      parallelMap (pure . (+ 1)) ([] :: [Int]) `shouldReturn` []
 
-    it "отрицание" $
-      prettyExpr (Not (BLit True)) `shouldBe` "(not True)"
+    it "сохраняет порядок элементов" $
+      parallelMap (pure . show) [1, 2, 3 :: Int] `shouldReturn` ["1", "2", "3"]
 
-    it "логическое и" $
-      prettyExpr (And (BLit True) (BLit False))
-        `shouldBe` "(True && False)"
+    it "работает с IO-функциями" $ do
+      results <-
+        parallelMap
+          ( \x -> do
+              threadDelay 1000
+              pure (x * 2)
+          )
+          [1, 2, 3 :: Int]
+      results `shouldBe` [2, 4, 6]
 
-    it "больше" $
-      prettyExpr (Gt (ILit 3) (ILit 2)) `shouldBe` "(3 > 2)"
+  describe "Упражнение 6: Logger (TChan)" $ do
+    it "flushLog пустого логгера — пустой список" $ do
+      logger <- newLogger
+      msgs <- flushLog logger
+      msgs `shouldBe` []
 
-    it "вложенное выражение" $
-      prettyExpr (Add (Add (ILit 1) (ILit 2)) (ILit 3))
-        `shouldBe` "((1 + 2) + 3)"
+    it "логирует и получает сообщения" $ do
+      logger <- newLogger
+      logMessage logger "Первое"
+      logMessage logger "Второе"
+      logMessage logger "Третье"
+      msgs <- flushLog logger
+      msgs `shouldBe` ["Первое", "Второе", "Третье"]
 
-  describe "Container (упражнение 3)" $ do
-    it "список: empty и insert" $ do
-      let xs = insert (3 :: Int) (insert 2 (insert 1 (empty :: [Int])))
-      toList xs `shouldBe` [1, 2, 3]
+    it "после flush канал пуст" $ do
+      logger <- newLogger
+      logMessage logger "Тест"
+      _ <- flushLog logger
+      msgs <- flushLog logger
+      msgs `shouldBe` []
 
-    it "список: containerFromList" $
-      containerFromList [1, 2, 3 :: Int] `shouldBe` [1, 2, 3 :: Int]
+  describe "Упражнение 7: raceAll" $ do
+    it "возвращает результат самого быстрого действия" $ do
+      result <-
+        raceAll
+          [ threadDelay 500_000 >> pure "медленный"
+          , threadDelay 10_000 >> pure "быстрый"
+          , threadDelay 1_000_000 >> pure "очень медленный"
+          ]
+      result `shouldBe` "быстрый"
 
-    it "Set: containerFromList сортирует" $
-      toList (containerFromList [3, 1, 2 :: Int] :: Set.Set Int)
-        `shouldBe` [1, 2, 3]
-
-    it "Set: insert дубликат" $ do
-      let s = insert (1 :: Int) (insert 1 (empty :: Set.Set Int))
-      toList s `shouldBe` [1]
-
-    it "Map: containerFromList" $ do
-      let m = containerFromList [("a", 1), ("b", 2)] :: Map.Map String Int
-      Map.toList m `shouldBe` [("a", 1), ("b", 2)]
-
-    it "Map: insert перезаписывает" $ do
-      let m = insert ("a", 2) (insert ("a", 1) (empty :: Map.Map String Int))
-      toList m `shouldBe` [("a", 2)]
-
-  describe "Vec (упражнение 4)" $ do
-    it "vhead" $
-      vhead (VCons 1 VNil) `shouldBe` (1 :: Int)
-
-    it "vhead длинного вектора" $
-      vhead (VCons 'a' (VCons 'b' (VCons 'c' VNil))) `shouldBe` 'a'
-
-    it "vtail" $
-      vtail (VCons 1 (VCons 2 VNil)) `shouldBe` VCons (2 :: Int) VNil
-
-    it "vtail до пустого" $
-      vtail (VCons 'x' VNil) `shouldBe` (VNil :: Vec 'Zero Char)
-
-    it "vzip" $
-      vzip (VCons 1 (VCons 2 VNil)) (VCons 'a' (VCons 'b' VNil))
-        `shouldBe` VCons (1 :: Int, 'a') (VCons (2, 'b') VNil)
-
-    it "vzip пустых" $
-      vzip (VNil :: Vec 'Zero Int) (VNil :: Vec 'Zero Char)
-        `shouldBe` VNil
-
-    it "vappend VNil" $
-      vappend VNil (VCons 1 (VCons 2 VNil))
-        `shouldBe` VCons (1 :: Int) (VCons 2 VNil)
-
-    it "vappend двух непустых" $
-      vappend (VCons 1 (VCons 2 VNil)) (VCons 3 VNil)
-        `shouldBe` VCons (1 :: Int) (VCons 2 (VCons 3 VNil))
-
-    it "vappend к VNil" $
-      vappend (VCons 'a' VNil) VNil
-        `shouldBe` VCons 'a' VNil
+    it "работает с одним действием" $ do
+      result <- raceAll [pure (42 :: Int)]
+      result `shouldBe` 42

@@ -1,6 +1,6 @@
 name: chapter02
 version: 0.1.0.0
-synopsis: "Haskell by Example — Глава 2: Начало работы"
+synopsis: "Haskell by Example — Глава 2: Типы, функции и REPL"
 license: MIT
 
 default-extensions:

@@ -1,0 +1,43 @@
+name: chapter19
+version: 0.1.0.0
+synopsis: "Haskell by Example — Глава 19: GADTs и семейства типов"
+license: MIT
+
+default-extensions:
+  - OverloadedStrings
+  - DeriveGeneric
+  - DerivingStrategies
+  - GeneralizedNewtypeDeriving
+  - DeriveFunctor
+  - DeriveFoldable
+  - DeriveTraversable
+  - LambdaCase
+  - ScopedTypeVariables
+  - TypeApplications
+  - NamedFieldPuns
+  - RecordWildCards
+  - TupleSections
+  - NumericUnderscores
+  - ImportQualifiedPost
+  - GADTs
+  - DataKinds
+  - TypeFamilies
+  - StandaloneDeriving
+  - KindSignatures
+
+dependencies:
+  - base >= 4.18 && < 5
+
+library:
+  source-dirs: src
+  dependencies:
+    - containers
+
+tests:
+  chapter19-tests:
+    main: Spec.hs
+    source-dirs: test
+    dependencies:
+      - chapter19
+      - hspec
+      - containers

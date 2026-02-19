@@ -6,13 +6,13 @@ cabal-version: 1.12
 
 name:           chapter13
 version:        0.1.0.0
-synopsis:       Haskell by Example — Глава 13: Графика
+synopsis:       Haskell by Example — Глава 13: Трансформеры и mtl
 license:        MIT
 build-type:     Simple
 
 library
   exposed-modules:
-      Graphics
+      TaskTracker
   other-modules:
       Paths_chapter13
   hs-source-dirs:
@@ -36,6 +36,8 @@ library
   build-depends:
       base >=4.18 && <5
     , containers
+    , mtl
+    , transformers
   default-language: Haskell2010
 
 test-suite chapter13-tests
@@ -67,4 +69,6 @@ test-suite chapter13-tests
     , chapter13
     , containers
     , hspec
+    , mtl
+    , transformers
   default-language: Haskell2010

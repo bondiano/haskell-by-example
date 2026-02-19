@@ -1,10 +1,32 @@
 module MySolutions where
 
-diagonal :: Double -> Double -> Double
-diagonal w h = undefined
+import Data.List (nubBy)
+import TaskTracker
 
-circleArea :: Double -> Double
-circleArea r = undefined
+-- | Создать задачу с приоритетом Medium, статусом Todo и пустым описанием.
+mkTask :: String -> Task
+mkTask = undefined
 
-collatzLength :: Int -> Int
-collatzLength = undefined
+-- | Завершить задачу — вернуть копию со статусом Done.
+completeTask :: Task -> Task
+completeTask = undefined
+
+-- | Найти задачу по точному совпадению заголовка.
+findTaskByTitle :: String -> TaskList -> Maybe Task
+findTaskByTitle = undefined
+
+-- | Проверить, существует ли задача с данным заголовком.
+taskExists :: String -> TaskList -> Bool
+taskExists = undefined
+
+-- | Проверить, является ли задача высокоприоритетной.
+isHighPriority :: Task -> Bool
+isHighPriority = undefined
+
+-- | Отформатировать список задач: show каждой задачи через unlines.
+formatTasks :: TaskList -> String
+formatTasks = undefined
+
+-- | Удалить дубликаты по заголовку (оставить первое вхождение).
+removeDuplicates :: TaskList -> TaskList
+removeDuplicates = undefined

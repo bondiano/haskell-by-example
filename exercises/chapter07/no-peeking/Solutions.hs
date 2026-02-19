@@ -1,46 +1,79 @@
 module Solutions where
 
-import Data.AddressBook
-import Data.Char (isDigit)
+import Data.Map.Strict qualified as Map
+import Data.Set qualified as Set
+import Data.Text (Text)
+import Data.Text qualified as T
+import TaskTracker
 
--- Упражнение 1: валидатор телефонного номера
+-- | Упражнение 1: Найти задачу по идентификатору.
+lookupTask :: TaskId -> TaskStore -> Maybe Task
+lookupTask tid (TaskStore m) = Map.lookup tid m
 
-validatePhoneNumber :: String -> Validation Errors String
-validatePhoneNumber phone =
-  check (not $ null phone) "Телефон не может быть пустым"
-  *> check (all isDigit phone) "Телефон должен содержать только цифры"
-  *> check (length phone >= 7) "Телефон должен содержать не менее 7 символов"
-  *> pure phone
-  where
-    check True  _ = Success ()
-    check False e = Failure [e]
+{- | Упражнение 2: Сериализовать хранилище в строку.
+Формат каждой строки: "id|title|priority|status"
+-}
+serializeStore :: TaskStore -> String
+serializeStore (TaskStore m)
+  | Map.null m = ""
+  | otherwise = unlines' $ map serializeEntry (Map.toAscList m)
+ where
+  serializeEntry (TaskId i, task) =
+    show i
+      ++ "|"
+      ++ T.unpack (taskTitle task)
+      ++ "|"
+      ++ show (taskPriority task)
+      ++ "|"
+      ++ show (taskStatus task)
 
--- Упражнение 2: комбинирование валидаторов
+  -- unlines без завершающего переноса строки
+  unlines' [] = ""
+  unlines' [x] = x
+  unlines' (x : xs) = x ++ "\n" ++ unlines' xs
 
-validatePerson :: String -> String -> String -> String -> String -> Validation Errors Person
-validatePerson first last_ street city st =
-  Person <$> nonEmpty "Имя" first
-         <*> nonEmpty "Фамилия" last_
-         <*> validateAddress street city st
+-- | Упражнение 3: Разобрать строку обратно в хранилище.
+parseStore :: String -> Either String TaskStore
+parseStore "" = Right emptyStore
+parseStore input = do
+  entries <- mapM parseLine (lines input)
+  Right $ TaskStore (Map.fromList entries)
+ where
+  parseLine line = case splitOn '|' line of
+    [idStr, title, prioStr, statusStr] -> do
+      tid <- case reads idStr of
+        [(i, "")] -> Right (TaskId i)
+        _ -> Left $ "Некорректный id: " ++ idStr
+      prio <- parsePriority prioStr
+      status <- parseStatus statusStr
+      Right (tid, Task (T.pack title) prio status Set.empty)
+    _ -> Left $ "Некорректный формат строки: " ++ line
 
--- Упражнение 3: traverse с индексом
+  parsePriority "Low" = Right Low
+  parsePriority "Medium" = Right Medium
+  parsePriority "High" = Right High
+  parsePriority s = Left $ "Некорректный приоритет: " ++ s
 
-traverseWithIndex :: Applicative f => (Int -> a -> f b) -> [a] -> f [b]
-traverseWithIndex f = go 0
-  where
-    go _ []     = pure []
-    go i (x:xs) = (:) <$> f i x <*> go (i + 1) xs
+  parseStatus "Todo" = Right Todo
+  parseStatus "InProgress" = Right InProgress
+  parseStatus "Done" = Right Done
+  parseStatus s = Left $ "Некорректный статус: " ++ s
 
--- Упражнение 4: валидация через Either (fail-fast)
+  splitOn :: Char -> String -> [String]
+  splitOn _ "" = [""]
+  splitOn sep s =
+    let (w, rest) = break (== sep) s
+     in w : case rest of
+          [] -> []
+          (_ : rs) -> splitOn sep rs
 
-eitherValidateAddress :: String -> String -> String -> Either String Address
-eitherValidateAddress s c st =
-  Address <$> eitherNonEmpty "Улица" s
-          <*> eitherNonEmpty "Город" c
-          <*> eitherNonEmpty "Регион" st
-
-validatePersonEither :: String -> String -> String -> String -> String -> Either String Person
-validatePersonEither first last_ street city st =
-  Person <$> eitherNonEmpty "Имя" first
-         <*> eitherNonEmpty "Фамилия" last_
-         <*> eitherValidateAddress street city st
+-- | Упражнение 4: Пронумеровать строки текста.
+addNumbers :: String -> String
+addNumbers input =
+  let ls = lines input
+      numbered = zipWith (\n l -> show n ++ ": " ++ l) [1 :: Int ..] ls
+   in unlines' numbered
+ where
+  unlines' [] = ""
+  unlines' [x] = x
+  unlines' (x : xs) = x ++ "\n" ++ unlines' xs

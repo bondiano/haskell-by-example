@@ -1,36 +1,111 @@
 module MySolutions where
 
-import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (mapConcurrently)
-import Control.Concurrent.QSem
+import Data.List (isSubsequenceOf, sort)
+import Data.Map.Strict qualified as Map
+import Test.Hspec
+import Test.QuickCheck
 
--- Упражнение 1: параллельная сумма подсписков
+import TaskTracker
+
+-- ============================================================
+-- Упражнение 1: addTaskSpec
 --
--- Вычислите сумму каждого подсписка параллельно через mapConcurrently,
--- затем сложите результаты.
+-- Напишите тесты для функции addTask:
+--   - после добавления задачи lookupTask находит её
+--   - после добавления storeSize увеличивается на 1
+--     (при условии, что ключ новый)
+-- ============================================================
 
-concurrentSum :: [[Int]] -> IO Int
-concurrentSum = undefined
+addTaskSpec :: Spec
+addTaskSpec = undefined
 
--- Упражнение 2: таймаут через race
+-- ============================================================
+-- Упражнение 2: filterTasksSpec
 --
--- Запустите действие с ограничением по времени (микросекунды).
--- Верните Just результат, если действие успело, или Nothing при таймауте.
+-- Напишите тесты для функции filterTasks:
+--   - ByStatus фильтрует по статусу
+--   - ByPriority фильтрует по приоритету
+--   - AllTasks возвращает все задачи
+-- Минимум 3 теста.
+-- ============================================================
 
-withTimeout :: Int -> IO a -> IO (Maybe a)
-withTimeout = undefined
+filterTasksSpec :: Spec
+filterTasksSpec = undefined
 
--- Упражнение 3: конкурентный подсчёт слов в файлах
+-- ============================================================
+-- Упражнение 3: trackerProperties (QuickCheck)
 --
--- Прочитайте файлы параллельно и подсчитайте слова в каждом.
+-- Напишите свойства:
+--   - addTask увеличивает размер на 1 (для нового ключа)
+--   - removeTask после addTask возвращает исходное хранилище
+--     (если ключ до этого отсутствовал)
+--   - filterTasks AllTasks возвращает тот же список
+-- ============================================================
 
-concurrentWordCount :: [FilePath] -> IO [(FilePath, Int)]
-concurrentWordCount = undefined
+trackerProperties :: Spec
+trackerProperties = undefined
 
--- Упражнение 4: ограниченная конкурентность
+-- ============================================================
+-- Упражнение 4: reverseSpec
 --
--- Как mapConcurrently, но не более n задач одновременно.
--- Используйте QSem для ограничения.
+-- Напишите тесты для стандартной функции reverse:
+--   - reverse пустого списка
+--   - reverse одноэлементного списка
+--   - reverse многоэлементного списка
+-- ============================================================
 
-mapConcurrentlyLimited :: Int -> (a -> IO b) -> [a] -> IO [b]
-mapConcurrentlyLimited = undefined
+reverseSpec :: Spec
+reverseSpec = undefined
+
+-- ============================================================
+-- Упражнение 5: lookupSpec
+--
+-- Напишите тесты для Map.lookup:
+--   - поиск существующего ключа
+--   - поиск отсутствующего ключа
+--   - поиск в пустой Map
+-- ============================================================
+
+lookupSpec :: Spec
+lookupSpec = undefined
+
+-- ============================================================
+-- Упражнение 6: Arbitrary инстансы и свойство фильтрации
+--
+-- Определите Arbitrary инстансы для Priority, Status,
+-- Task и TaskFilter.
+--
+-- Затем напишите свойство: результат filterTasks —
+-- всегда подмножество входного списка.
+-- ============================================================
+
+instance Arbitrary Priority where
+  arbitrary = undefined
+
+instance Arbitrary Status where
+  arbitrary = undefined
+
+instance Arbitrary Task where
+  arbitrary = undefined
+
+instance Arbitrary TaskFilter where
+  arbitrary = undefined
+
+-- | Результат фильтрации — подмножество входного списка.
+prop_filterSubset :: TaskFilter -> [Task] -> Bool
+prop_filterSubset = undefined
+
+-- ============================================================
+-- Упражнение 7: Свойства сортировки
+--
+-- prop_sortOrdered    — отсортированный список упорядочен
+-- prop_sortIdempotent — повторная сортировка не меняет результат
+-- ============================================================
+
+-- | Отсортированный список упорядочен.
+prop_sortOrdered :: [Int] -> Bool
+prop_sortOrdered = undefined
+
+-- | sort . sort == sort (идемпотентность).
+prop_sortIdempotent :: [Int] -> Bool
+prop_sortIdempotent = undefined

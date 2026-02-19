@@ -6,13 +6,14 @@ cabal-version: 1.12
 
 name:           chapter03
 version:        0.1.0.0
-synopsis:       Haskell by Example — Глава 3: Функции и записи
+synopsis:       Haskell by Example — Глава 3: Алгебраические типы и паттерн-матчинг
 license:        MIT
 build-type:     Simple
 
 library
   exposed-modules:
-      Data.AddressBook
+      AddressBook
+      TaskTracker
   other-modules:
       Paths_chapter03
   hs-source-dirs:

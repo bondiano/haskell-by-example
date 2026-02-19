@@ -1,84 +1,99 @@
 module Solutions where
 
-import Control.Exception (IOException, try)
-import Control.Monad.Except (throwError)
-import Control.Monad.Reader (ask)
-import Control.Monad.State.Strict (gets, modify)
-import Data.Aeson (FromJSON, eitherDecode)
-import qualified Data.ByteString.Lazy as BL
-import Data.List (delete)
+import Control.Monad (foldM)
+import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe)
 
-import Game
+import TaskTracker
 
--- Упражнение 1: осмотр комнаты
+-- ============================================================
+-- Упражнение 1: Завершение задачи
+-- ============================================================
 
-look :: Game String
-look = do
-  name <- gets playerRoom
-  config <- ask
-  case getRoomDef name config of
-    Nothing -> throwError (GameOver ("Неизвестная комната: " <> name))
-    Just room -> do
-      items <- gets (fromMaybe [] . Map.lookup name . roomItems)
-      let exits = Map.keys (roomExits room)
-      return $ roomDesc room
-        <> "\nПредметы: " <> showItems items
-        <> "\nВыходы: " <> showExits exits
+-- | Ищем задачу, проверяем статус, устанавливаем Done.
+completeTask :: TaskId -> TaskStore -> Either AppError TaskStore
+completeTask tid store@(TaskStore m) = do
+  task <- note (TaskNotFound tid) (lookupTask tid store)
+  case taskStatus task of
+    Done -> Left (AlreadyDone tid)
+    _ -> Right (TaskStore (Map.insert tid (task{taskStatus = Done}) m))
 
--- Упражнение 2: перемещение
+-- ============================================================
+-- Упражнение 2: Удаление задачи
+-- ============================================================
 
-move :: Direction -> Game String
-move dir = do
-  name <- gets playerRoom
-  config <- ask
-  case getRoomDef name config of
-    Nothing -> throwError (GameOver ("Неизвестная комната: " <> name))
-    Just room ->
-      case Map.lookup dir (roomExits room) of
-        Nothing -> throwError (NoExit dir)
-        Just nextRoom -> do
-          modify (\s -> s { playerRoom = nextRoom })
-          return ("Вы идёте на " <> showDirection dir <> ".")
+-- | Проверяем наличие задачи через note, затем удаляем.
+deleteTask :: TaskId -> TaskStore -> Either AppError TaskStore
+deleteTask tid store@(TaskStore m) = do
+  _ <- note (TaskNotFound tid) (lookupTask tid store)
+  Right (TaskStore (Map.delete tid m))
 
--- Упражнение 3: подбор предмета
+-- ============================================================
+-- Упражнение 3: Обработка команд
+-- ============================================================
 
-pickUp :: Item -> Game String
-pickUp item = do
-  name <- gets playerRoom
-  items <- gets (fromMaybe [] . Map.lookup name . roomItems)
-  if item `notElem` items
-    then throwError (ItemNotFound item)
-    else do
-      modify (\s -> s
-        { roomItems = Map.adjust (delete item) name (roomItems s)
-        , inventory = inventory s <> [item]
-        })
-      return ("Вы подобрали: " <> showItem item)
+{- | Обрабатываем команды через foldM.
+AddCmd: создаём задачу с TaskId = размер + 1.
+CompleteCmd: завершаем через completeTask.
+-}
+processCommands :: AppConfig -> [Command] -> TaskStore -> Either AppError TaskStore
+processCommands cfg cmds store0 = foldM (flip $ executeCmd cfg) store0 cmds
+ where
+  executeCmd :: AppConfig -> Command -> TaskStore -> Either AppError TaskStore
+  executeCmd config (AddCmd title) store =
+    let tid = TaskId (Map.size (unTaskStore store) + 1)
+        task = Task title (defaultPriority config) Todo
+     in Right (addTask tid task store)
+  executeCmd _ (CompleteCmd tid) store =
+    completeTask tid store
 
--- Упражнение 4: использование предмета
+-- ============================================================
+-- Упражнение 4: safeHead и firstPlusSecond
+-- ============================================================
 
-useItem :: Item -> Game String
-useItem item = do
-  inv <- gets inventory
-  if item `notElem` inv
-    then throwError (ItemNotFound item)
-    else do
-      modify (\s -> s { inventory = delete item (inventory s) })
-      case item of
-        Potion -> do
-          modify (\s -> s { playerHealth = min 100 (playerHealth s + 25) })
-          return "Вы выпили зелье. Здоровье восстановлено."
-        Lamp   -> return "Лампа освещает тёмный путь."
-        Sword  -> return "Вы взмахнули мечом. Впечатляюще!"
-        Key    -> return "Вы использовали ключ."
+-- | Безопасное взятие первого элемента.
+safeHead :: [a] -> Maybe a
+safeHead [] = Nothing
+safeHead (x : _) = Just x
 
--- Упражнение 5: безопасное чтение JSON-файла
+-- | Сумма первых двух элементов через do-нотацию Maybe.
+firstPlusSecond :: [Int] -> Maybe Int
+firstPlusSecond xs = do
+  a <- safeHead xs
+  b <- safeHead (drop 1 xs)
+  return (a + b)
 
-safeReadJSON :: FromJSON a => FilePath -> IO (Either String a)
-safeReadJSON path = do
-  result <- try (BL.readFile path) :: IO (Either IOException BL.ByteString)
-  case result of
-    Left err -> return (Left (show err))
-    Right bs -> return (eitherDecode bs)
+-- ============================================================
+-- Упражнение 5: Валидация задачи
+-- ============================================================
+
+-- | Проверяем название: не пустое и не длиннее 200.
+validateTask :: Task -> Either String Task
+validateTask task
+  | null (taskTitle task) = Left "Пустое название"
+  | length (taskTitle task) > 200 = Left "Название слишком длинное"
+  | otherwise = Right task
+
+-- ============================================================
+-- Упражнение 6: Все комбинации
+-- ============================================================
+
+-- | Монада списка: все пары (Priority, Status).
+allTaskCombinations :: [(Priority, Status)]
+allTaskCombinations = do
+  p <- [Low, Medium, High]
+  s <- [Todo, InProgress, Done]
+  return (p, s)
+
+-- ============================================================
+-- Упражнение 7: Цепочка поисков
+-- ============================================================
+
+{- | Ищем каждый ключ в Map, все должны быть найдены.
+Возвращаем значение последнего ключа.
+-}
+safeLookupChain :: (Ord k) => [k] -> Map k k -> Maybe k
+safeLookupChain [] _ = Nothing
+safeLookupChain (k : ks) m = do
+  v <- Map.lookup k m
+  foldM (\_ k' -> Map.lookup k' m) v ks

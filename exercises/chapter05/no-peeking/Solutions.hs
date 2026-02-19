@@ -1,42 +1,69 @@
 module Solutions where
 
-import Data.Path
-import Data.List (foldl')
+import Data.List (sortBy)
+import TaskTracker
 
--- | Все файлы (не каталоги) в дереве.
-allFiles :: Path -> [Path]
-allFiles f@(File _ _)      = [f]
-allFiles (Directory _ cs)  = concatMap allFiles cs
+-- | Класс для человекочитаемого описания значений.
+class Describable a where
+  describe :: a -> String
 
--- | Самый большой файл в дереве.
-largestFile :: Path -> Maybe (Path, Int)
-largestFile path =
-  case allFiles path of
-    []    -> Nothing
-    files -> Just $ foldl1 bigger (map withSize files)
-  where
-    withSize f@(File _ s) = (f, s)
-    withSize _            = error "impossible: allFiles returns only Files"
-    bigger a@(_, s1) b@(_, s2)
-      | s1 >= s2  = a
-      | otherwise = b
+-- Упражнение 1
+instance Describable Priority where
+  describe Low = "Низкий приоритет"
+  describe Medium = "Средний приоритет"
+  describe High = "Высокий приоритет"
 
--- | Найти файл по имени и вернуть содержащий его каталог.
-whereIs :: Path -> String -> Maybe Path
-whereIs (File _ _) _ = Nothing
-whereIs dir@(Directory _ cs) target
-  | any (\c -> not (isDirectory c) && filename c == target) cs = Just dir
-  | otherwise = case concatMap (\c -> maybe [] (:[]) (whereIs c target)) cs of
-      (found:_) -> Just found
-      []        -> Nothing
+-- Упражнение 2
+instance Describable Status where
+  describe Todo = "К выполнению"
+  describe InProgress = "В работе"
+  describe Done = "Выполнено"
 
--- | Суммарный размер всех файлов в дереве.
-totalSize :: Path -> Int
-totalSize (File _ s)      = s
-totalSize (Directory _ cs) = foldl' (\acc c -> acc + totalSize c) 0 cs
+-- Упражнение 3
+instance Describable Task where
+  describe task =
+    "["
+      ++ describe (taskPriority task)
+      ++ "] "
+      ++ taskTitle task
+      ++ " — "
+      ++ describe (taskStatus task)
 
--- | Собственная строгая левая свёртка через seq.
-strictFoldl :: (b -> a -> b) -> b -> [a] -> b
-strictFoldl _ z []     = z
-strictFoldl f z (x:xs) = let z' = f z x
-                          in z' `seq` strictFoldl f z' xs
+{- | Упражнение 4: Сравнение задач — сначала по приоритету (High первый),
+затем по статусу (Todo первый).
+-}
+compareTasks :: Task -> Task -> Ordering
+compareTasks a b =
+  case compare (taskPriority b) (taskPriority a) of
+    EQ -> compare (taskStatus a) (taskStatus b)
+    x -> x
+
+-- | Упражнение 5: Сортировка задач с помощью compareTasks.
+sortTasks :: [Task] -> [Task]
+sortTasks = sortBy compareTasks
+
+-- | Упражнение 6: Список всех значений приоритета.
+allPriorities :: [Priority]
+allPriorities = [minBound .. maxBound]
+
+-- | Упражнение 7: Циклическое переключение приоритета.
+cyclePriority :: Priority -> Priority
+cyclePriority p
+  | p == maxBound = minBound
+  | otherwise = succ p
+
+-- | Упражнение 8: Обёртка над String с deriving Show и Eq.
+newtype Name = Name String
+  deriving stock (Show)
+  deriving newtype (Eq)
+
+-- | Класс для получения краткой и подробной сводки.
+class Summarizable a where
+  summary :: a -> String
+  detailedSummary :: a -> String
+  detailedSummary = summary
+
+-- Упражнение 9
+instance Summarizable TaskStats where
+  summary stats =
+    show (totalTasks stats) ++ " задач: " ++ show (doneCount stats) ++ " выполнено"

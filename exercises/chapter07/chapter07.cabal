@@ -6,13 +6,13 @@ cabal-version: 1.12
 
 name:           chapter07
 version:        0.1.0.0
-synopsis:       Haskell by Example — Глава 7: Аппликативная валидация
+synopsis:       Haskell by Example — Глава 7: IO: взаимодействие с миром
 license:        MIT
 build-type:     Simple
 
 library
   exposed-modules:
-      Data.AddressBook
+      TaskTracker
   other-modules:
       Paths_chapter07
   hs-source-dirs:
@@ -35,6 +35,8 @@ library
       ImportQualifiedPost
   build-depends:
       base >=4.18 && <5
+    , containers
+    , text
   default-language: Haskell2010
 
 test-suite chapter07-tests
@@ -64,5 +66,8 @@ test-suite chapter07-tests
   build-depends:
       base >=4.18 && <5
     , chapter07
+    , containers
+    , directory
     , hspec
+    , text
   default-language: Haskell2010

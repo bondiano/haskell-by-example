@@ -1,6 +1,6 @@
 name: chapter05
 version: 0.1.0.0
-synopsis: "Haskell by Example — Глава 5: Рекурсия, map и свёртки"
+synopsis: "Haskell by Example — Глава 5: Классы типов"
 license: MIT
 
 default-extensions:

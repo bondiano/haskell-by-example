@@ -1,101 +1,108 @@
 module Main where
 
-import Test.Hspec
-import Data.IORef
-import AddressBook
 import MySolutions
+import TaskTracker
+import Test.Hspec
 
 main :: IO ()
 main = hspec $ do
-  describe "findByName (предоставлено)" $ do
-    it "находит по точному имени" $
-      length (findByName "Иван Петров" exampleBook) `shouldBe` 1
+  describe "Упражнение 1: computeStatsStrict" $ do
+    it "корректная статистика для exampleTasks" $
+      computeStatsStrict exampleTasks
+        `shouldBe` TaskStats
+          { totalTasks = 5
+          , todoCount = 2
+          , doneCount = 2
+          , highPriority = 2
+          }
 
-    it "не находит отсутствующее имя" $
-      findByName "Нет Такого" exampleBook `shouldBe` []
+    it "пустой список — все нули" $
+      computeStatsStrict []
+        `shouldBe` TaskStats 0 0 0 0
 
-  describe "deleteEntry (упражнение 1)" $ do
-    it "удаляет запись по имени" $
-      length (deleteEntry "Иван Петров" exampleBook) `shouldBe` 2
+    it "один элемент — Todo High" $
+      computeStatsStrict [Task "Тест" High Todo]
+        `shouldBe` TaskStats 1 1 0 1
 
-    it "удалённого имени больше нет" $
-      findByName "Иван Петров" (deleteEntry "Иван Петров" exampleBook)
-        `shouldBe` []
+    it "один элемент — Done Low" $
+      computeStatsStrict [Task "Тест" Low Done]
+        `shouldBe` TaskStats 1 0 1 0
 
-    it "не меняет книгу при отсутствии имени" $
-      deleteEntry "Нет Такого" exampleBook `shouldBe` exampleBook
+  describe "Упражнение 2: badSum и goodSum" $ do
+    it "badSum и goodSum дают одинаковый результат на маленьком списке" $
+      badSum [1 .. 100] `shouldBe` goodSum [1 .. 100]
 
-    it "удаляет все записи с одинаковым именем" $ do
-      let book = [Entry "A" "1" "a", Entry "B" "2" "b", Entry "A" "3" "c"]
-      deleteEntry "A" book `shouldBe` [Entry "B" "2" "b"]
+    it "goodSum пустого списка — 0" $
+      goodSum [] `shouldBe` 0
 
-  describe "saveAddressBook / loadAddressBook (упражнение 2)" $ do
-    it "round-trip: save и load" $ do
-      let book = [Entry "Тест" "123" "test@example.com"]
-      let path = "/tmp/hbe-ch08-test.dat"
-      saveAddressBook path book
-      loaded <- loadAddressBook path
-      loaded `shouldBe` book
+    it "goodSum одного элемента" $
+      goodSum [42] `shouldBe` 42
 
-    it "round-trip с несколькими записями" $ do
-      let path = "/tmp/hbe-ch08-test2.dat"
-      saveAddressBook path exampleBook
-      loaded <- loadAddressBook path
-      loaded `shouldBe` exampleBook
+    it "badSum [1..10] == 55" $
+      badSum [1 .. 10] `shouldBe` 55
 
-    it "round-trip с пустой книгой" $ do
-      let path = "/tmp/hbe-ch08-test3.dat"
-      saveAddressBook path []
-      loaded <- loadAddressBook path
-      loaded `shouldBe` []
+    it "goodSum [1..1000] == 500500" $
+      goodSum [1 .. 1000] `shouldBe` 500500
 
-  describe "fuzzySearch (упражнение 3)" $ do
-    it "находит по подстроке имени" $
-      length (fuzzySearch "Петр" exampleBook) `shouldBe` 1
+  describe "Упражнение 3: ones" $ do
+    it "первые 5 элементов — [1,1,1,1,1]" $
+      take 5 ones `shouldBe` [1, 1, 1, 1, 1]
 
-    it "регистронезависимый поиск" $
-      length (fuzzySearch "мария" exampleBook) `shouldBe` 1
+    it "первые 10 элементов — все единицы" $
+      take 10 ones `shouldBe` replicate 10 1
 
-    it "пустой запрос — все записи" $
-      fuzzySearch "" exampleBook `shouldBe` exampleBook
+    it "сумма первых 100 — 100" $
+      sum (take 100 ones) `shouldBe` 100
 
-    it "нет совпадений — пустой список" $
-      fuzzySearch "xyz" exampleBook `shouldBe` []
+  describe "Упражнение 4: fibs" $ do
+    it "первые 8 чисел Фибоначчи" $
+      take 8 fibs `shouldBe` [0, 1, 1, 2, 3, 5, 8, 13]
 
-    it "находит несколько совпадений" $ do
-      let book = [Entry "Иванов" "1" "a", Entry "Иванова" "2" "b", Entry "Петров" "3" "c"]
-      length (fuzzySearch "иван" book) `shouldBe` 2
+    it "первые 2 числа" $
+      take 2 fibs `shouldBe` [0, 1]
 
-  describe "recordState / undoLastChange (упражнение 4)" $ do
-    it "undo возвращает предыдущее состояние" $ do
-      ref <- newIORef ([] :: [AddressBook])
-      let s1 = [Entry "A" "1" "a"]
-      let s2 = [Entry "A" "1" "a", Entry "B" "2" "b"]
-      recordState ref s1
-      recordState ref s2
-      result <- undoLastChange ref
-      result `shouldBe` Just s1
+    it "10-е число Фибоначчи (индекс 10)" $
+      fibs !! 10 `shouldBe` 55
 
-    it "undo пустой истории возвращает Nothing" $ do
-      ref <- newIORef ([] :: [AddressBook])
-      result <- undoLastChange ref
-      result `shouldBe` Nothing
+    it "20-е число Фибоначчи (индекс 20)" $
+      fibs !! 20 `shouldBe` 6765
 
-    it "undo единственного состояния возвращает Nothing" $ do
-      ref <- newIORef ([] :: [AddressBook])
-      recordState ref [Entry "A" "1" "a"]
-      result <- undoLastChange ref
-      result `shouldBe` Nothing
+  describe "Упражнение 5: predictions" $ do
+    it "правильные предсказания ленивости" $
+      predictions `shouldBe` ["1", "error", "3", "1", "ok"]
 
-    it "двойной undo" $ do
-      ref <- newIORef ([] :: [AddressBook])
-      let s1 = [Entry "A" "1" "a"]
-      let s2 = s1 <> [Entry "B" "2" "b"]
-      let s3 = s2 <> [Entry "C" "3" "c"]
-      recordState ref s1
-      recordState ref s2
-      recordState ref s3
-      r1 <- undoLastChange ref
-      r1 `shouldBe` Just s2
-      r2 <- undoLastChange ref
-      r2 `shouldBe` Just s1
+    it "длина списка предсказаний — 5" $
+      length predictions `shouldBe` 5
+
+  describe "Упражнение 6: totalLengthStrict" $ do
+    it "суммарная длина [\"abc\", \"de\", \"f\"] == 6" $
+      totalLengthStrict ["abc", "de", "f"] `shouldBe` 6
+
+    it "пустой список — 0" $
+      totalLengthStrict [] `shouldBe` 0
+
+    it "одна пустая строка — 0" $
+      totalLengthStrict [""] `shouldBe` 0
+
+    it "несколько строк" $
+      totalLengthStrict ["hello", "world"] `shouldBe` 10
+
+  describe "Упражнение 7: strictMap" $ do
+    it "strictMap (+1) [1,2,3] == [2,3,4]" $
+      strictMap (+ 1) [1, 2, 3] `shouldBe` [2, 3, 4]
+
+    it "strictMap (*2) [10, 20] == [20, 40]" $
+      strictMap (* 2) [10, 20] `shouldBe` [20, 40]
+
+    it "strictMap show [1,2,3]" $
+      strictMap show [1 :: Int, 2, 3] `shouldBe` ["1", "2", "3"]
+
+    it "strictMap на пустом списке" $
+      strictMap (+ 1) ([] :: [Int]) `shouldBe` []
+
+  describe "Бонус: nats" $ do
+    it "первые 5 натуральных чисел" $
+      take 5 nats `shouldBe` [1, 2, 3, 4, 5]
+
+    it "10-е натуральное число" $
+      nats !! 9 `shouldBe` 10

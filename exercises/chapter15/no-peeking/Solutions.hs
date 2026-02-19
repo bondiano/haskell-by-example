@@ -1,121 +1,169 @@
 module Solutions where
 
+import Data.Char (toLower)
+import Data.List (intercalate)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Text.Megaparsec
-import Text.Megaparsec.Char
-import Text.Megaparsec.Char.Lexer qualified as L
-import Language.Expr (Expr(..))
-import Language.Expr.Parser (Parser, sc, lexeme, symbol, keyword)
-import Language.Json (JValue(..))
+import Data.Text (Text)
+import Data.Text qualified as T
+import Text.Read (readMaybe)
+
+import TaskTracker
 
 -- ============================================================
--- Упражнение 1: Вычислитель выражений (без переменных)
+-- Упражнение 1: Статистика хранилища
 -- ============================================================
 
--- | Вычисление выражения без поддержки переменных.
---
--- Для бинарных операций используется аппликативный стиль:
--- @(+) <$> eval a <*> eval b@ — вычисляет оба аргумента
--- и применяет операцию. Ошибки автоматически «всплывают»
--- благодаря монаде Either.
-eval :: Expr -> Either String Double
-eval (Lit n)     = Right n
-eval (Add a b)   = (+) <$> eval a <*> eval b
-eval (Sub a b)   = (-) <$> eval a <*> eval b
-eval (Mul a b)   = (*) <$> eval a <*> eval b
-eval (Div a b)   = do
-  x <- eval a
-  y <- eval b
-  if y == 0 then Left "division by zero" else Right (x / y)
-eval (Neg a)     = negate <$> eval a
-eval (Var _)     = Left "variables not supported"
-eval (Let _ _ _) = Left "let bindings not supported"
+data TaskStats = TaskStats
+  { totalTasks :: Int
+  , todoCount :: Int
+  , doneCount :: Int
+  , highPriority :: Int
+  }
+  deriving (Show, Eq)
+
+-- | Проходим по всем задачам и считаем нужные метрики.
+computeStats :: TaskStore -> TaskStats
+computeStats store =
+  let tasks = map snd (allTasks store)
+   in TaskStats
+        { totalTasks = length tasks
+        , todoCount = length (filter (\t -> taskStatus t == Todo) tasks)
+        , doneCount = length (filter (\t -> taskStatus t == Done) tasks)
+        , highPriority = length (filter (\t -> taskPriority t == High) tasks)
+        }
 
 -- ============================================================
--- Упражнение 2: Оптимизатор AST
+-- Упражнение 2: Смарт-конструктор приоритета
 -- ============================================================
 
--- | Оптимизация выражения по алгебраическим тождествам.
---
--- Стратегия: сначала рекурсивно оптимизируем поддеревья,
--- затем применяем правила упрощения к корню.
--- Это гарантирует, что правила применяются «снизу вверх».
-optimize :: Expr -> Expr
-optimize (Lit n)   = Lit n
-optimize (Var x)   = Var x
-optimize (Add a b) = case (optimize a, optimize b) of
-  (Lit 0, x) -> x
-  (x, Lit 0) -> x
-  (a', b')   -> Add a' b'
-optimize (Sub a b) = case (optimize a, optimize b) of
-  (x, Lit 0) -> x
-  (a', b')   -> Sub a' b'
-optimize (Mul a b) = case (optimize a, optimize b) of
-  (Lit 0, _) -> Lit 0
-  (_, Lit 0) -> Lit 0
-  (Lit 1, x) -> x
-  (x, Lit 1) -> x
-  (a', b')   -> Mul a' b'
-optimize (Div a b) = Div (optimize a) (optimize b)
-optimize (Neg a)   = case optimize a of
-  Neg x -> x
-  a'    -> Neg a'
-optimize (Let x e b) = Let x (optimize e) (optimize b)
+-- | Приводим строку к нижнему регистру и сопоставляем с образцом.
+mkPriority :: String -> Maybe Priority
+mkPriority s =
+  case map toLower s of
+    "low" -> Just Low
+    "medium" -> Just Medium
+    "high" -> Just High
+    _ -> Nothing
 
 -- ============================================================
--- Упражнение 3: Парсер JSON
+-- Упражнение 3: Парсинг команд
 -- ============================================================
 
--- | Парсер JSON-значения.
---
--- Структура — цепочка альтернатив (<|>).
--- Для ключевых слов (null, true, false) используем keyword,
--- чтобы не совпадать с началом идентификатора.
-parseJsonValue :: Parser JValue
-parseJsonValue =
-      JNull       <$  keyword "null"
-  <|> JBool True  <$  keyword "true"
-  <|> JBool False <$  keyword "false"
-  <|> JNumber     <$> lexeme (try L.float <|> L.decimal)
-  <|> JString     <$> pStringLit
-  <|> JArray      <$> between (symbol "[") (symbol "]")
-                       (parseJsonValue `sepBy` symbol ",")
-  <|> JObject     <$> between (symbol "{") (symbol "}")
-                       (pPair `sepBy` symbol ",")
-  where
-    pStringLit = lexeme $ char '"' *> manyTill L.charLiteral (char '"')
-    pPair      = (,) <$> pStringLit <*> (symbol ":" *> parseJsonValue)
+data Command
+  = AddCmd Text
+  | ListCmd
+  | DoneCmd TaskId
+  | DeleteCmd TaskId
+  | QuitCmd
+  deriving (Show, Eq)
 
--- | Разбирает строку как JSON.
-parseJson :: String -> Either String JValue
-parseJson input = case parse (sc *> parseJsonValue <* eof) "" input of
-  Left err  -> Left (errorBundlePretty err)
-  Right val -> Right val
+-- | Разбираем строку по первому слову, используем readMaybe для чисел.
+parseCommand :: String -> Maybe Command
+parseCommand input =
+  case words input of
+    ["list"] -> Just ListCmd
+    ["quit"] -> Just QuitCmd
+    ("add" : rest)
+      | not (null rest) -> Just (AddCmd (T.pack (unwords rest)))
+    ["done", n] -> DoneCmd . TaskId <$> readMaybe n
+    ["delete", n] -> DeleteCmd . TaskId <$> readMaybe n
+    _ -> Nothing
 
 -- ============================================================
--- Упражнение 4: Вычислитель с переменными
+-- Упражнение 4: Отображение задач
 -- ============================================================
 
--- | Вычисление выражения с поддержкой переменных.
---
--- Окружение (Map String Double) хранит привязки переменных.
--- При Let x e b: вычисляем e, расширяем окружение и вычисляем b.
-evalWithVars :: Map String Double -> Expr -> Either String Double
-evalWithVars env = go
-  where
-    go (Lit n)     = Right n
-    go (Var x)     = case Map.lookup x env of
-                       Just v  -> Right v
-                       Nothing -> Left ("undefined variable: " ++ x)
-    go (Add a b)   = (+) <$> go a <*> go b
-    go (Sub a b)   = (-) <$> go a <*> go b
-    go (Mul a b)   = (*) <$> go a <*> go b
-    go (Div a b)   = do
-      x <- go a
-      y <- go b
-      if y == 0 then Left "division by zero" else Right (x / y)
-    go (Neg a)     = negate <$> go a
-    go (Let x e b) = do
-      v <- go e
-      evalWithVars (Map.insert x v env) b
+-- | Форматируем задачу: "[id] title (priority, status)"
+renderTask :: (TaskId, Task) -> String
+renderTask (TaskId tid, Task{taskTitle, taskPriority, taskStatus}) =
+  "["
+    ++ show tid
+    ++ "] "
+    ++ T.unpack taskTitle
+    ++ " ("
+    ++ show taskPriority
+    ++ ", "
+    ++ show taskStatus
+    ++ ")"
+
+-- | Соединяем отформатированные задачи через перенос строки.
+renderTaskList :: [(TaskId, Task)] -> String
+renderTaskList = intercalate "\n" . map renderTask
+
+-- | Форматируем статистику в читаемую строку.
+renderStats :: TaskStats -> String
+renderStats TaskStats{..} =
+  "Всего: "
+    ++ show totalTasks
+    ++ ", Todo: "
+    ++ show todoCount
+    ++ ", Done: "
+    ++ show doneCount
+    ++ ", Высокий приоритет: "
+    ++ show highPriority
+
+-- ============================================================
+-- Упражнение 5: Непустой текст
+-- ============================================================
+
+newtype NonEmptyText = NonEmptyText Text
+  deriving (Show, Eq)
+
+-- | Проверяем, что текст не пуст и не состоит из одних пробелов.
+mkNonEmptyText :: Text -> Maybe NonEmptyText
+mkNonEmptyText t
+  | T.null (T.strip t) = Nothing
+  | otherwise = Just (NonEmptyText t)
+
+unNonEmptyText :: NonEmptyText -> Text
+unNonEmptyText (NonEmptyText t) = t
+
+-- ============================================================
+-- Упражнение 6: lookupDefault
+-- ============================================================
+
+-- | Используем Map.findWithDefault, меняя порядок аргументов.
+lookupDefault :: (Ord k) => v -> k -> Map k v -> v
+lookupDefault = Map.findWithDefault
+
+-- ============================================================
+-- Упражнение 7: Парсинг CSV
+-- ============================================================
+
+-- | Парсим каждую строку CSV, разделяя по запятой.
+parseCSV :: Text -> Either String [Task]
+parseCSV input
+  | T.null input = Right []
+  | otherwise = mapM parseLine (T.lines input)
+ where
+  parseLine :: Text -> Either String Task
+  parseLine line =
+    case T.splitOn "," line of
+      [title, prio, stat] -> do
+        p <- parsePrio (T.strip prio)
+        s <- parseStatus (T.strip stat)
+        Right (Task (T.strip title) p s)
+      _ -> Left ("Неверный формат строки: " ++ T.unpack line)
+
+  parsePrio :: Text -> Either String Priority
+  parsePrio t =
+    case T.toLower t of
+      "low" -> Right Low
+      "medium" -> Right Medium
+      "high" -> Right High
+      _ -> Left ("Неизвестный приоритет: " ++ T.unpack t)
+
+  parseStatus :: Text -> Either String Status
+  parseStatus t =
+    case T.toLower t of
+      "todo" -> Right Todo
+      "in_progress" -> Right InProgress
+      "done" -> Right Done
+      _ -> Left ("Неизвестный статус: " ++ T.unpack t)
+
+-- ============================================================
+-- Упражнение 8 (не тестируется):
+-- Организация package.yaml — пример структуры пакета
+-- уже представлен в самом package.yaml этой главы.
+-- ============================================================

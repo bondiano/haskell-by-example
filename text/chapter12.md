@@ -1,470 +1,591 @@
-# Приключения с монадами
+# Монады
 
-## Цели главы
+В [главе 5](chapter05.md) мы освоили классы типов, в [главе 7](chapter07.md) — IO и do-нотацию, в [главе 8](chapter08.md) — обработку ошибок с `Either` и вложенными `case`, а в [главе 11](chapter11.md) — `Functor` и `Applicative`. Все эти нити сходятся здесь. Глава посвящена классу `Monad` — механизму **зависимых вычислений**, где каждый шаг определяется результатом предыдущего. Мы разберём `>>=` (bind) и do-нотацию (наконец-то поняв, во что она раскрывается), изучим конкретные монады (`Maybe`, `Either`, список, `IO`, `Reader`) и рефакторим трекер задач, заменив вложенные `case` монадическим стилем.
 
-В этой главе мы познакомимся с *трансформерами монад* — механизмом комбинирования монадических эффектов. Мы разберём `ReaderT`, `StateT`, `ExceptT` и библиотеку `mtl`, а затем применим всё это к созданию текстовой RPG-игры.
+## Проблема: зависимые вычисления
 
-Проект главы — подземелье с комнатами, предметами, инвентарём и обработкой ошибок — полностью чистый и тестируемый.
+### Applicative: независимые вычисления
 
-## Проблема: несколько эффектов одновременно
-
-В главе 9 мы работали с `IO` — единственной монадой для побочных эффектов. Но что, если нужны *несколько* эффектов одновременно?
-
-- **Чтение конфигурации** — нужен доступ к настройкам, которые не меняются.
-- **Изменяемое состояние** — нужно обновлять позицию игрока, инвентарь.
-- **Обработка ошибок** — нужно реагировать на невозможные действия.
-
-Каждый из этих эффектов — отдельная монада:
-
-| Эффект | Монада | Операции |
-|--------|--------|----------|
-| Чтение окружения | `Reader r` | `ask`, `asks` |
-| Изменяемое состояние | `State s` | `get`, `put`, `modify` |
-| Ошибки | `Except e` | `throwError`, `catchError` |
-
-Но как их скомбинировать?
-
-## Трансформеры монад
-
-*Трансформер монады* берёт монаду и добавляет к ней эффект:
-
-| Трансформер | Добавляет | Базовая монада |
-|-------------|-----------|----------------|
-| `ReaderT r m` | Чтение `r` | `m` |
-| `StateT s m` | Состояние `s` | `m` |
-| `ExceptT e m` | Ошибки `e` | `m` |
-| `WriterT w m` | Логирование `w` | `m` |
-
-Трансформеры *стекируются*:
+В [главе 11](chapter11.md) мы видели, как `Applicative` позволяет комбинировать *независимые* вычисления:
 
 ```haskell
-type App a = ReaderT Config (StateT AppState (ExceptT AppError IO)) a
+-- Каждый аргумент вычисляется независимо от других
+createTask :: Maybe Task
+createTask = Task
+  <$> lookupTitle config      -- Может вернуть Nothing
+  <*> lookupDescription config -- Может вернуть Nothing
+  <*> lookupPriority config    -- Может вернуть Nothing
+  <*> pure Todo
 ```
 
-Этот стек означает: «вычисление с доступом к `Config`, изменяемым `AppState`, ошибками `AppError`, и IO».
-
-### `ReaderT` — окружение
-
-`ReaderT r m a` — вычисление в монаде `m` с доступом к значению типа `r`:
+Все три поиска *независимы* друг от друга. `Applicative` собирает результаты, но ни один не может повлиять на следующий шаг. Но что, если нужно принять решение на основе промежуточного результата?
 
 ```haskell
-import Control.Monad.Reader
-
-type App a = ReaderT Config IO a
-
-data Config = Config { appName :: String, debug :: Bool }
-
-greet :: App ()
-greet = do
-  name <- asks appName       -- извлечь поле из конфига
-  liftIO (putStrLn ("Привет от " <> name))
-
-main :: IO ()
-main = runReaderT greet (Config "MyApp" True)
+-- Прочитать конфиг → на основе конфига выбрать файл → прочитать файл
+processConfig :: IO String
+processConfig = do
+  configPath <- getLine                -- Шаг 1: получить путь
+  config     <- readFile configPath    -- Шаг 2: зависит от шага 1!
+  let output = processData config      -- Шаг 3: зависит от шага 2!
+  pure output
 ```
 
-Ключевые операции:
+Шаг 2 *зависит* от результата шага 1 — мы не знаем, какой файл читать, пока не получим путь. `Monad` даёт именно эту возможность: **выбирать следующее вычисление на основе результата предыдущего**.
 
-```haskell
-ask    :: MonadReader r m => m r                    -- получить весь конфиг
-asks   :: MonadReader r m => (r -> a) -> m a        -- применить функцию к конфигу
-local  :: MonadReader r m => (r -> r) -> m a -> m a -- временно изменить конфиг
+```admonish note title="Иерархия: Functor → Applicative → Monad"
+Каждый уровень добавляет новую возможность:
+- **Functor** (`fmap`): преобразовать значение внутри контекста.
+- **Applicative** (`<*>`): комбинировать *независимые* вычисления в контексте.
+- **Monad** (`>>=`): *зависимые* вычисления, где следующий шаг определяется результатом предыдущего.
+
+Каждый `Monad` — `Applicative`, а каждый `Applicative` — `Functor`.
 ```
 
-### `StateT` — изменяемое состояние
+## Класс Monad
 
-`StateT s m a` — вычисление в монаде `m` с состоянием типа `s`:
+### Определение
 
 ```haskell
-import Control.Monad.State
+class Applicative m => Monad m where
+  (>>=)  :: m a -> (a -> m b) -> m b   -- «bind» (связывание)
+  (>>)   :: m a -> m b -> m b           -- «then» (затем)
+  return :: a -> m a                    -- обернуть значение в контекст
 
-type Counter a = StateT Int IO a
-
-increment :: Counter ()
-increment = modify (+ 1)
-
-getCount :: Counter Int
-getCount = get
-
-main :: IO ()
-main = do
-  (count, finalState) <- runStateT (increment >> increment >> getCount) 0
-  putStrLn (show count)       -- 2
-  putStrLn (show finalState)  -- 2
+  -- Реализации по умолчанию:
+  m >> k = m >>= \_ -> k
+  return = pure
 ```
 
-Ключевые операции:
+Ключевой оператор — `>>=` (произносится «bind»): возьми вычисление `m a`, передай результат в функцию `a -> m b`, которая *создаёт новое вычисление*. Именно эта функция обеспечивает «зависимость» — она *видит* результат предыдущего шага и решает, что делать дальше.
+
+### Сравнение с fmap и <*>
 
 ```haskell
-get    :: MonadState s m => m s                    -- прочитать состояние
-gets   :: MonadState s m => (s -> a) -> m a        -- применить функцию к состоянию
-put    :: MonadState s m => s -> m ()              -- заменить состояние
-modify :: MonadState s m => (s -> s) -> m ()       -- изменить состояние
+fmap  :: Functor f     => (a -> b)   -> f a -> f b   -- не влияет на контекст
+(<*>) :: Applicative f => f (a -> b) -> f a -> f b   -- контексты независимы
+(>>=) :: Monad m       => m a -> (a -> m b) -> m b   -- контекст зависит от значения
 ```
 
-### `ExceptT` — обработка ошибок
+```admonish tip title="Знакомый аналог"
+**JavaScript:** `>>=` — это `.then()` у Promise: `fetchUser(id).then(user => fetchPosts(user.name))`. Каждый `.then()` получает результат предыдущего шага и возвращает новый Promise.
+**Scala/Kotlin:** `>>=` — это `.flatMap()`: `list.flatMap(x => List(x, x*2))`.
+**Rust:** `>>=` — это `.and_then()` у `Option`/`Result`.
+```
 
-`ExceptT e m a` — вычисление в монаде `m`, которое может завершиться ошибкой типа `e`:
+### Законы монад
+
+Как `Functor` и `Applicative`, `Monad` подчиняется законам:
 
 ```haskell
-import Control.Monad.Except
+-- 1. Левая единица: return не добавляет эффектов
+return a >>= f  ≡  f a
 
-data AppError = NotFound String | Forbidden
-  deriving stock Show
+-- 2. Правая единица: return не теряет эффектов
+m >>= return  ≡  m
 
-type App a = ExceptT AppError IO a
+-- 3. Ассоциативность: порядок группировки не важен
+(m >>= f) >>= g  ≡  m >>= (\x -> f x >>= g)
+```
 
-findUser :: String -> App String
-findUser "admin" = return "Администратор"
-findUser name    = throwError (NotFound name)
+```admonish warning title="Распространённое заблуждение"
+Monad — это **не** про побочные эффекты. Monad — паттерн *последовательных вычислений с контекстом*. `Maybe` — контекст возможного отсутствия. `Either` — контекст ошибки. `[]` — контекст множественных результатов. `IO` — контекст побочных эффектов. Побочные эффекты — лишь *один из* контекстов.
+```
 
+## do-нотация: полная картина
+
+### Помните главу 7?
+
+В [главе 7](chapter07.md) мы писали код в `IO` и использовали do-нотацию:
+
+```haskell
 main :: IO ()
 main = do
-  result <- runExceptT (findUser "guest")
-  case result of
-    Left err   -> putStrLn ("Ошибка: " <> show err)
-    Right user -> putStrLn user
+  putStrLn "Как вас зовут?"
+  name <- getLine
+  putStrLn ("Привет, " <> name <> "!")
 ```
 
-Ключевые операции:
+Тогда мы приняли do-нотацию как данность. Теперь разберём, что за ней стоит. do-нотация — **синтаксический сахар** для цепочки `>>=` и `>>`. Правила раскрытия:
+
+| do-нотация | Раскрытие |
+|---|---|
+| `x <- action; ...` | `action >>= \x -> ...` |
+| `action; ...` (без `<-`) | `action >> ...` |
+| `let x = expr; ...` | `let x = expr in ...` |
+| `action` (последнее) | `action` (как есть) |
+
+Разберём пример из главы 7 шаг за шагом:
 
 ```haskell
-throwError :: MonadError e m => e -> m a              -- бросить ошибку
-catchError :: MonadError e m => m a -> (e -> m a) -> m a  -- поймать ошибку
+-- do-нотация:
+main :: IO ()
+main = do
+  putStrLn "Как вас зовут?"
+  name <- getLine
+  putStrLn ("Привет, " <> name <> "!")
+
+-- Раскрытие:
+main :: IO ()
+main =
+  putStrLn "Как вас зовут?" >>     -- Правило 2: нет <-, используем >>
+  getLine >>= \name ->             -- Правило 1: name <- ..., используем >>=
+  putStrLn ("Привет, " <> name <> "!")  -- Правило 4: последнее выражение
 ```
 
-## `mtl` — классы вместо конкретных типов
-
-Библиотека `mtl` предоставляет *классы типов* для эффектов:
-
-- `MonadReader r m` — «`m` поддерживает чтение `r`»
-- `MonadState s m` — «`m` поддерживает состояние `s`»
-- `MonadError e m` — «`m` поддерживает ошибки `e`»
-
-Это позволяет писать функции, абстрагированные от конкретного стека:
+Ничего магического — просто удобная запись. И ключевой момент: do-нотация работает для *любого* типа с инстансом `Monad`, не только `IO`:
 
 ```haskell
-greet :: MonadReader Config m => m String
-greet = do
-  name <- asks appName
-  return ("Привет, " <> name)
+-- do для Maybe:
+safeDivide :: Int -> Int -> Maybe Int
+safeDivide _ 0 = Nothing
+safeDivide x y = Just (x `div` y)
+
+calculation :: Maybe Int
+calculation = do
+  a <- safeDivide 100 5    -- Maybe Int
+  b <- safeDivide a 4      -- Maybe Int, зависит от a!
+  safeDivide b 2            -- Maybe Int, зависит от b!
+-- Результат: Just 2
+
+-- do для Either:
+validateAge :: Int -> Either String Int
+validateAge age
+  | age < 0   = Left "Возраст не может быть отрицательным"
+  | age > 150 = Left "Слишком большой возраст"
+  | otherwise = Right age
+
+registration :: Either String String
+registration = do
+  age <- validateAge 25
+  let category = if age >= 18 then "взрослый" else "ребёнок"
+  pure ("Зарегистрирован: " <> category)
+-- Результат: Right "Зарегистрирован: взрослый"
 ```
 
-`greet` работает в *любой* монаде с `MonadReader Config`, не только в `ReaderT Config IO`.
-
-## Исключения в IO
-
-До сих пор мы обрабатывали ошибки через чистые типы: `Maybe`, `Either`, `ExceptT`. Но в `IO` существует ещё одна система — **runtime-исключения**.
-
-### Две системы обработки ошибок
-
-| | Чистая (`Either` / `ExceptT`) | IO (`Control.Exception`) |
-|---|---|---|
-| Видимость | В типах: `Either Error a` | Неявная: любое `IO a` может бросить |
-| Предсказуемость | Компилятор заставляет обработать | Может вылететь неожиданно |
-| Когда использовать | Бизнес-логика, валидация | I/O, сеть, системные вызовы |
-
-Правило: для ожидаемых ошибок (неверный ввод, бизнес-правила) — `Either` / `ExceptT`. Для непредвиденных (файл не найден, разрыв соединения) — исключения IO.
-
-### Иерархия исключений
-
-Все исключения в Haskell наследуют от `SomeException`:
-
-```text
-SomeException
-├── IOException          -- файловые и сетевые ошибки
-├── AsyncException       -- прерывание потока, тайм-ауты
-├── ErrorCall            -- error "сообщение"
-└── ... пользовательские типы
+```admonish tip title="Знакомый аналог"
+**JavaScript:** do-нотация — это `async/await`. Как `await` — синтаксический сахар для `.then()`, так `<-` в do-блоке — синтаксический сахар для `>>=`. Разница в том, что `async/await` работает только с Promise, а do-нотация — с любой монадой.
 ```
 
-Под капотом — экзистенциальные типы и `Typeable`, но на практике достаточно знать, что каждый тип исключения — экземпляр класса `Exception`.
+## Maybe как монада
 
-### `try`, `catch`, `throwIO`
-
-Модуль `Control.Exception` предоставляет три основных функции:
+Вспомним паттерн из [главы 8](chapter08.md) — цепочка вычислений, каждое из которых может вернуть `Nothing`:
 
 ```haskell
-import Control.Exception
-
--- Поймать исключение и вернуть Either
-try :: Exception e => IO a -> IO (Either e a)
-
--- Поймать исключение обработчиком
-catch :: Exception e => IO a -> (e -> IO a) -> IO a
-
--- Бросить исключение в IO
-throwIO :: Exception e => e -> IO a
+lookupAndComplete :: TaskId -> TaskStore -> Maybe TaskStore
+lookupAndComplete tid store =
+  case Map.lookup tid (unTaskStore store) of
+    Nothing   -> Nothing
+    Just task ->
+      case validateNotDone task of
+        Nothing    -> Nothing
+        Just task' -> Just (updateTask tid (task' { taskStatus = Done }) store)
 ```
 
-Пример — безопасное чтение файла:
+Каждый `case` добавляет уровень вложенности — «лесенка».
+
+### Решение: инстанс Monad для Maybe
 
 ```haskell
-import Control.Exception (try)
-import System.IO.Error (IOError)
-
-safeReadFile :: FilePath -> IO (Either String String)
-safeReadFile path = do
-  result <- try (readFile path) :: IO (Either IOError String)
-  case result of
-    Left err  -> return (Left (show err))
-    Right txt -> return (Right txt)
+instance Monad Maybe where
+  Nothing >>= _ = Nothing   -- Если Nothing, остановись
+  Just x  >>= f = f x       -- Если Just, передай значение в f
 ```
 
-`try` перехватывает исключения *указанного типа*. Если мы ловим `IOError` — перехватятся только ошибки ввода-вывода. Другие исключения (например, `ErrorCall`) пролетят мимо.
-
-### `bracket` — гарантия освобождения ресурсов
-
-`bracket` гарантирует, что ресурс будет освобождён даже при исключении:
+Всего две строки — но они решают нашу проблему. Сравним два варианта записи:
 
 ```haskell
-bracket :: IO a          -- захват ресурса
-        -> (a -> IO b)   -- освобождение (вызывается ВСЕГДА)
-        -> (a -> IO c)   -- использование
-        -> IO c
+-- С >>=:
+lookupAndComplete tid store =
+  Map.lookup tid (unTaskStore store) >>= \task ->
+  validateNotDone task >>= \task' ->
+  Just (updateTask tid (task' { taskStatus = Done }) store)
+
+-- С do-нотацией:
+lookupAndComplete tid store = do
+  task  <- Map.lookup tid (unTaskStore store)
+  task' <- validateNotDone task
+  pure (updateTask tid (task' { taskStatus = Done }) store)
 ```
 
-Пример:
+Вложенности нет. Каждая строка — один шаг. При первом `Nothing` остальные не выполнятся.
+
+## Either как монада
+
+### Прощай, лесенка ошибок
+
+`Either` работает аналогично `Maybe`, но вместо простого «нет значения» несёт информацию об ошибке:
 
 ```haskell
-import System.IO (openFile, hClose, hGetContents, IOMode(..))
-
-safeReadContents :: FilePath -> IO String
-safeReadContents path =
-  bracket (openFile path ReadMode) hClose hGetContents
+instance Monad (Either e) where
+  Left  e >>= _ = Left e    -- Если ошибка, остановись и сохрани её
+  Right x >>= f = f x       -- Если успех, передай значение в f
 ```
 
-Даже если `hGetContents` бросит исключение, `hClose` всё равно будет вызван. Стандартная функция `withFile` реализована через `bracket`.
-
-### Собственные исключения
-
-Для создания собственного типа исключения нужно:
-
-1. Определить тип данных с `deriving Show`.
-2. Объявить экземпляр `Exception`.
+Перепишем вложенные `case` из [главы 8](chapter08.md) монадическим стилем. Для этого определим хелпер `note`, превращающий `Maybe` в `Either`:
 
 ```haskell
-import Control.Exception
+note :: e -> Maybe a -> Either e a
+note err Nothing  = Left err
+note _   (Just x) = Right x
 
+-- Было: вложенные case → Стало: плоская цепочка
+lookupAndComplete :: TaskId -> TaskStore -> Either AppError TaskStore
+lookupAndComplete tid store = do
+  task <- note (TaskNotFound tid) (Map.lookup tid (unTaskStore store))
+  when (taskStatus task == Done)
+    (Left (InvalidInput "Задача уже завершена"))
+  pure (updateTask tid (task { taskStatus = Done }) store)
+```
+
+### Цепочка валидаций
+
+```haskell
 data AppError
-  = ConfigNotFound FilePath
-  | ParseFailed String
-  deriving stock Show
+  = TaskNotFound TaskId
+  | InvalidInput String
+  | PermissionDenied String
+  deriving (Show, Eq)
 
-instance Exception AppError
+validateAndAssign :: TaskId -> String -> TaskStore -> Either AppError TaskStore
+validateAndAssign tid assignee store = do
+  task <- note (TaskNotFound tid) (Map.lookup tid (unTaskStore store))
+  when (taskStatus task == Done)
+    (Left (InvalidInput "Нельзя назначить завершённую задачу"))
+  when (null assignee)
+    (Left (InvalidInput "Имя исполнителя не может быть пустым"))
+  let updated = task { taskAssignee = Just assignee }
+  pure (updateTask tid updated store)
 ```
 
-Теперь `AppError` можно бросать и ловить:
+Четыре проверки — и ни одного вложенного `case`. Первая ошибка прерывает цепочку.
+
+## Список как монада
+
+Список — монада **не-детерминированных вычислений**: каждый шаг может дать несколько результатов, и все комбинации исследуются:
 
 ```haskell
-loadConfig :: FilePath -> IO Config
-loadConfig path = do
-  exists <- doesFileExist path
-  unless exists $ throwIO (ConfigNotFound path)
-  contents <- readFile path
-  case parseConfig contents of
-    Left err  -> throwIO (ParseFailed err)
-    Right cfg -> return cfg
+instance Monad [] where
+  xs >>= f = concatMap f xs
+  -- Для каждого элемента xs применяем f,
+  -- получаем список списков, объединяем в один список
 ```
-
-### `ExceptT` vs исключения IO
-
-Когда использовать что:
-
-- **`ExceptT`** — когда все ошибки известны заранее и являются частью бизнес-логики. Компилятор заставляет их обработать. Идеально для чистого кода (как наша RPG-игра ниже).
-- **Исключения IO** — когда ошибки непредсказуемы (файл удалён, сеть упала). Используйте `try`/`catch` на границе приложения, преобразуя в `Either` для остального кода.
-
-## Проект: текстовая RPG-игра
-
-### Архитектура
-
-Наша игра — чистое вычисление (без `IO`!):
 
 ```haskell
-type Game a = ReaderT GameConfig (StateT GameState (ExceptT GameError Identity)) a
+-- Все пары (x, y), где x из [1,2,3], y из [10,20]
+pairs :: [(Int, Int)]
+pairs = do
+  x <- [1, 2, 3]
+  y <- [10, 20]
+  pure (x, y)
+-- Результат: [(1,10),(1,20),(2,10),(2,20),(3,10),(3,20)]
 ```
 
-Три слоя:
+Раскрытие: `[1,2,3] >>= \x -> [10,20] >>= \y -> [(x,y)]` применяет `concatMap` дважды, порождая все 6 комбинаций.
 
-1. **`ReaderT GameConfig`** — карта подземелья (комнаты, выходы). Не меняется.
-2. **`StateT GameState`** — позиция игрока, инвентарь, здоровье. Меняется.
-3. **`ExceptT GameError`** — ошибки (нет выхода, нет предмета). Прерывает выполнение.
+### Связь со list comprehensions
 
-Поскольку вместо `IO` используется `Identity`, вся игровая логика чистая и тестируемая:
+List comprehension — синтаксический сахар для списковой монады. Запись `[(x, y) | x <- [1..3], y <- [10,20]]` эквивалентна do-нотации выше. Условия фильтрации соответствуют `guard` из `Control.Monad`:
 
 ```haskell
-runGame :: GameConfig -> GameState -> Game a -> Either GameError (a, GameState)
-runGame config state game =
-  runIdentity $ runExceptT $ runStateT (runReaderT game config) state
+import Control.Monad (guard)
+
+pythagorean :: Int -> [(Int, Int, Int)]
+pythagorean n = do
+  a <- [1..n]
+  b <- [a..n]
+  c <- [b..n]
+  guard (a*a + b*b == c*c)
+  pure (a, b, c)
+-- pythagorean 20 = [(3,4,5),(5,12,13),(6,8,10),(8,15,17),(9,12,15)]
 ```
 
-### Типы
+### Практический пример: генерация тестовых данных
 
 ```haskell
-data Direction = North | South | East | West
-
-data Item = Lamp | Sword | Key | Potion
-
-data RoomDef = RoomDef
-  { roomDesc  :: String
-  , roomExits :: Map Direction String
-  }
-
-data GameConfig = GameConfig
-  { configRooms :: Map String RoomDef
-  }
-
-data GameState = GameState
-  { playerRoom   :: String
-  , inventory    :: [Item]
-  , playerHealth :: Int
-  , roomItems    :: Map String [Item]
-  }
-
-data GameError
-  = NoExit Direction
-  | ItemNotFound Item
-  | GameOver String
+-- Все возможные комбинации задач для тестирования
+testTasks :: [Task]
+testTasks = do
+  priority <- [Low, Medium, High]
+  status   <- [Todo, InProgress, Done]
+  let title = "Задача " <> show priority <> "/" <> show status
+  pure (Task title "" priority status)
+-- Результат: 9 задач (3 приоритета × 3 статуса)
 ```
 
-### Разделение статики и динамики
+## IO — монада, которую вы уже знаете
 
-Обратите внимание: структура комнат (`RoomDef`, `GameConfig`) — в `ReaderT` (не меняется). Предметы в комнатах (`roomItems`) — в `StateT` (меняются, когда игрок подбирает предмет).
-
-Это важный паттерн: **конфигурацию** кладём в `ReaderT`, **состояние** — в `StateT`.
-
-### Пример: осмотр комнаты
+Всё это время, начиная с [главы 7](chapter07.md), вы писали монадический код! `IO` — монада, и do-нотация в `IO` работает по тем же правилам:
 
 ```haskell
-look :: Game String
-look = do
-  name <- gets playerRoom           -- текущая комната из состояния
-  config <- ask                     -- весь конфиг
-  case getRoomDef name config of
-    Nothing -> throwError (GameOver ("Неизвестная комната: " <> name))
-    Just room -> do
-      items <- gets (fromMaybe [] . Map.lookup name . roomItems)
-      let exits = Map.keys (roomExits room)
-      return $ roomDesc room
-        <> "\nПредметы: " <> showItems items
-        <> "\nВыходы: " <> showExits exits
+-- Теперь вы понимаете, что это значит:
+main :: IO ()
+main = do
+  putStrLn "Введите ID задачи:"   -- IO (), эффект
+  input <- getLine                  -- IO String, >>=, результат в input
+  let tid = read input :: Int       -- let, чистое вычисление
+  putStrLn ("ID: " <> show tid)    -- IO (), зависит от tid (Monad!)
 ```
 
-### Пример: перемещение
+Раскроем:
 
 ```haskell
-move :: Direction -> Game String
-move dir = do
-  name <- gets playerRoom
-  config <- ask
-  case getRoomDef name config of
-    Nothing -> throwError (GameOver ("Неизвестная комната: " <> name))
-    Just room ->
-      case Map.lookup dir (roomExits room) of
-        Nothing -> throwError (NoExit dir)
-        Just nextRoom -> do
-          modify (\s -> s { playerRoom = nextRoom })
-          return ("Вы идёте на " <> showDirection dir <> ".")
+main :: IO ()
+main =
+  putStrLn "Введите ID задачи:" >>
+  getLine >>= \input ->
+  let tid = read input :: Int in
+  putStrLn ("ID: " <> show tid)
 ```
 
-### Тестирование
+`IO` — самая «обычная» монада. Её особенность — невозможность «убрать» контекст: нет функции `IO a -> a`.
 
-Поскольку `Game` не использует `IO`, тесты — чистые:
+```admonish note title="Почему IO «особая»"
+Для `Maybe` есть `fromMaybe :: a -> Maybe a -> a` — можно извлечь значение.
+Для `Either` есть `fromRight :: b -> Either a b -> b`.
+Для `IO` такой функции нет (кроме `unsafePerformIO`, которая нарушает гарантии).
+Это не ограничение монады — это *свойство типа IO*, обеспечивающее чистоту языка.
+```
+
+## Reader — монада для конфигурации
+
+В реальных приложениях множество функций нуждаются в одном и том же контексте — конфигурации, подключении к БД, логгере:
 
 ```haskell
-it "перемещает на север" $ do
-  let Right (_, st) = runGame exampleConfig initialState (move North)
-  playerRoom st `shouldBe` "hall"
+data AppConfig = AppConfig
+  { defaultPriority :: Priority
+  , maxTasks        :: Int
+  , appName         :: String
+  } deriving (Show)
 
-it "ошибка при невозможном направлении" $ do
-  let result = runGame exampleConfig initialState (move East)
-  result `shouldBe` Left (NoExit East)
+-- Каждая функция принимает AppConfig явно — утомительно!
+createDefaultTask :: AppConfig -> String -> Task
+createDefaultTask config title = Task title "" (defaultPriority config) Todo
+
+canAddTask :: AppConfig -> TaskStore -> Bool
+canAddTask config store = Map.size (unTaskStore store) < maxTasks config
 ```
 
-### Композиция действий
-
-Действия `Game` компонуются через `do`:
+`AppConfig` передаётся повсюду вручную. `Reader` решает эту проблему, оборачивая функцию `r -> a` в монадический интерфейс:
 
 ```haskell
-adventure :: Game [String]
-adventure = do
-  msg1 <- look                  -- осмотреться
-  msg2 <- pickUp Lamp           -- подобрать лампу
-  msg3 <- move North            -- идти на север
-  msg4 <- pickUp Sword          -- подобрать меч
-  return [msg1, msg2, msg3, msg4]
+newtype Reader r a = Reader { runReader :: r -> a }
 ```
 
-Если любое действие бросит ошибку (`throwError`), вся цепочка прерывается — это поведение `ExceptT`.
+Вместо передачи конфигурации явно, мы *читаем* её из окружения:
+
+```haskell
+import Control.Monad.Reader (Reader, asks, runReader)
+
+type App a = Reader AppConfig a
+
+getDefaultPriority :: App Priority
+getDefaultPriority = asks defaultPriority
+
+getMaxTasks :: App Int
+getMaxTasks = asks maxTasks
+
+getAppName :: App String
+getAppName = asks appName
+```
+
+Функция `asks` извлекает конкретное поле из окружения, а `ask` возвращает окружение целиком. Монадический интерфейс позволяет комбинировать Reader-вычисления в do-нотации:
+
+```haskell
+createDefaultTask :: String -> App Task
+createDefaultTask title = do
+  prio <- getDefaultPriority
+  pure (Task title "" prio Todo)
+
+canAddTask :: TaskStore -> App Bool
+canAddTask store = do
+  maxN <- getMaxTasks
+  pure (Map.size (unTaskStore store) < maxN)
+
+formatHeader :: App String
+formatHeader = do
+  name <- getAppName
+  pure (name <> " — Трекер задач")
+```
+
+Запускаем, передав конфигурацию один раз через `runReader`:
+
+```haskell
+myConfig :: AppConfig
+myConfig = AppConfig { defaultPriority = Medium, maxTasks = 100, appName = "TaskMaster" }
+
+-- runReader formatHeader myConfig  ==>  "TaskMaster — Трекер задач"
+-- runReader (createDefaultTask "Новая задача") myConfig  ==>  Task { ..., taskPriority = Medium, ... }
+```
+
+```admonish tip title="Знакомый аналог"
+**OOP:** Reader — это dependency injection. Вместо того чтобы передавать зависимости в конструктор каждого класса, мы объявляем, что вычисление *зависит от окружения*, и предоставляем окружение один раз при запуске.
+**React:** Reader — это `useContext`. Провайдер контекста — `runReader`, потребитель — `ask`/`asks`.
+```
+
+## Рефакторим трекер задач
+
+Сравним «до» и «после» на примере операций трекера.
+
+### До: вложенные case (глава 8)
+
+Вспомним `transferTask` с тремя уровнями вложенности:
+
+```haskell
+transferTask :: TaskId -> TaskId -> TaskStore -> Either AppError TaskStore
+transferTask fromId toId store =
+  case Map.lookup fromId (unTaskStore store) of
+    Nothing -> Left (TaskNotFound fromId)
+    Just fromTask ->
+      case Map.lookup toId (unTaskStore store) of
+        Nothing -> Left (TaskNotFound toId)
+        Just _toTask ->
+          case taskStatus fromTask of
+            Done -> Left (InvalidInput "Нельзя передать завершённую задачу")
+            _    -> Right (TaskStore (Map.insert toId fromTask (unTaskStore store)))
+```
+
+### После: монадический стиль
+
+```haskell
+-- Вспомогательные функции
+note :: e -> Maybe a -> Either e a
+note err Nothing  = Left err
+note _   (Just a) = Right a
+
+lookupTask :: TaskId -> TaskStore -> Either AppError Task
+lookupTask tid store =
+  note (TaskNotFound tid) (Map.lookup tid (unTaskStore store))
+
+ensureNotDone :: Task -> Either AppError ()
+ensureNotDone task =
+  when (taskStatus task == Done)
+    (Left (InvalidInput "Задача уже завершена"))
+
+-- Рефакторинг операций
+completeTask :: TaskId -> TaskStore -> Either AppError TaskStore
+completeTask tid store = do
+  task <- lookupTask tid store
+  ensureNotDone task
+  pure (TaskStore
+    (Map.insert tid (task { taskStatus = Done }) (unTaskStore store)))
+
+transferTask :: TaskId -> TaskId -> TaskStore -> Either AppError TaskStore
+transferTask fromId toId store = do
+  fromTask <- lookupTask fromId store
+  _toTask  <- lookupTask toId store
+  ensureNotDone fromTask
+  pure (TaskStore (Map.insert toId fromTask (unTaskStore store)))
+```
+
+Вложенность исчезла. Логика переиспользуется — `lookupTask` и `ensureNotDone` вынесены в хелперы. При первой ошибке (`Left`) цепочка прерывается автоматически. `transferTask` проверяет три условия, но код остаётся плоским.
+
+### Полезные монадические функции
+
+Модуль `Control.Monad` предоставляет комбинаторы:
+
+```haskell
+when   :: Applicative f => Bool -> f () -> f ()  -- действие по условию
+unless :: Applicative f => Bool -> f () -> f ()  -- действие, если условие ложно
+mapM   :: Monad m => (a -> m b) -> [a] -> m [b]  -- монадический map
+forM   :: Monad m => [a] -> (a -> m b) -> m [b]  -- mapM с аргументами наоборот
+foldM  :: Monad m => (b -> a -> m b) -> b -> [a] -> m b  -- монадическая свёртка
+join   :: Monad m => m (m a) -> m a               -- убрать один слой
+```
+
+Пример `foldM` — завершить все задачи с заданным приоритетом:
+
+```haskell
+completeByPriority :: Priority -> TaskStore -> Either AppError TaskStore
+completeByPriority prio store = do
+  let taskIds = [ tid | (tid, task) <- Map.toList (unTaskStore store)
+                      , taskPriority task == prio ]
+  foldM (\s tid -> completeTask tid s) store taskIds
+```
+
+`foldM` применяет `completeTask` к каждому `tid`, передавая обновлённый `store` на каждом шаге. Если какой-то шаг вернёт `Left`, вся свёртка прекратится.
 
 ## Упражнения
 
 Решения пишите в `test/MySolutions.hs`. Проверяйте: `stack test`.
 
-Модуль `Game` предоставляет типы, `runGame`, `getRoomDef`, `exampleConfig`, `initialState`, а также форматирование `showItem`, `showDirection`, `showItems`, `showExits`.
+### Проект ★☆☆
 
-1. **(Лёгкое)** Реализуйте `look` — описание текущей комнаты.
-
-    ```haskell
-    look :: Game String
-    ```
-
-    Результат должен содержать описание комнаты, список предметов и выходы. Используйте `gets` для доступа к состоянию, `ask` для конфига, `getRoomDef` для поиска комнаты.
-
-    *Подсказка:* при отсутствии комнаты в конфиге бросьте `GameOver`.
-
-2. **(Среднее)** Реализуйте `move` — перемещение в заданном направлении.
+1. Перепишите функцию `completeTask`, используя do-нотацию и `Either AppError`. Функция принимает `TaskId` и `TaskStore`, находит задачу, проверяет, что она не в статусе `Done`, и переводит её в `Done`.
 
     ```haskell
-    move :: Direction -> Game String
+    completeTask :: TaskId -> TaskStore -> Either AppError TaskStore
     ```
 
-    Проверьте, есть ли выход из текущей комнаты в данном направлении (`roomExits`). Если есть — обновите `playerRoom` через `modify`. Если нет — бросьте `NoExit`.
-
-3. **(Среднее)** Реализуйте `pickUp` — подбор предмета из текущей комнаты.
+2. Реализуйте функцию `deleteTask`, которая удаляет задачу по `TaskId`. Если задачи нет, верните `Left (TaskNotFound tid)`.
 
     ```haskell
-    pickUp :: Item -> Game String
+    deleteTask :: TaskId -> TaskStore -> Either AppError TaskStore
     ```
 
-    Проверьте наличие предмета в `roomItems` для текущей комнаты. Если предмет есть — уберите из комнаты (`Map.adjust`, `delete`), добавьте в `inventory`. Если нет — бросьте `ItemNotFound`.
+    *Подсказка:* используйте `note` и `Map.delete`.
 
-4. **(Сложное)** Реализуйте `useItem` — использование предмета из инвентаря.
+### Проект ★★☆
+
+3. Реализуйте функцию `processCommands`, которая принимает `AppConfig` и список команд, и выполняет их последовательно, используя `Reader`:
 
     ```haskell
-    useItem :: Item -> Game String
+    data Command = AddCmd String | CompleteCmd TaskId
+
+    processCommands :: [Command] -> TaskStore -> App TaskStore
     ```
 
-    Проверьте наличие предмета в `inventory`. Если есть — уберите из инвентаря и примените эффект:
-    - `Potion` — увеличить `playerHealth` на 25 (максимум 100).
-    - Остальные — вернуть описательное сообщение.
+    *Подсказка:* используйте `foldM` и `asks defaultPriority` для приоритета новых задач.
 
-    Если предмета нет — бросьте `ItemNotFound`.
+### Практика ★☆☆
 
-5. **(Среднее)** Реализуйте функцию `safeReadJSON`, которая безопасно читает JSON-файл, обрабатывая оба вида ошибок: `IOException` (файл не найден) и ошибку парсинга.
+4. Напишите функцию `safeHead`, которая безопасно извлекает первый элемент списка, и используйте её в монадической цепочке:
 
     ```haskell
-    safeReadJSON :: FromJSON a => FilePath -> IO (Either String a)
+    safeHead :: [a] -> Maybe a
+
+    firstPlusSecond :: [Int] -> Maybe Int
+    -- firstPlusSecond [3, 7, 1] = Just 10
+    -- firstPlusSecond [3]       = Nothing
+    -- firstPlusSecond []        = Nothing
     ```
 
-    ```text
-    > safeReadJSON "nonexistent.json" :: IO (Either String [Int])
-    Left "nonexistent.json: openFile: does not exist ..."
+    *Подсказка:* `safeHead xs` и `safeHead (drop 1 xs)` в do-нотации.
 
-    > safeReadJSON "valid.json" :: IO (Either String [Int])
-    Right [1,2,3]
+5. Напишите функцию `validateTask`, которая проверяет задачу по нескольким критериям и возвращает `Either String Task`:
+
+    ```haskell
+    validateTask :: Task -> Either String Task
+    -- Проверки: заголовок не пустой, описание не длиннее 200 символов
     ```
 
-    *Подсказка:* используйте `try` из `Control.Exception` для перехвата `IOException`, затем `eitherDecode` из `Data.Aeson` для парсинга.
+### Практика ★★☆
+
+6. Используя списковую монаду, напишите функцию `allTaskCombinations`, которая генерирует все возможные комбинации приоритетов и статусов:
+
+    ```haskell
+    allTaskCombinations :: [(Priority, Status)]
+    -- Результат: [(Low,Todo),(Low,InProgress),(Low,Done),(Medium,Todo),...] — 9 пар
+    ```
+
+7. Реализуйте функцию `safeLookupChain`, которая по списку ключей последовательно ищет значения в `Map`, где каждое найденное значение используется как ключ для следующего поиска:
+
+    ```haskell
+    safeLookupChain :: Ord k => [k] -> Map k k -> Maybe k
+    -- safeLookupChain ["a"] (Map.fromList [("a","b"),("b","c")]) = Just "b"
+    -- safeLookupChain ["a","b"] (Map.fromList [("a","b"),("b","c")]) = Just "c"
+    -- safeLookupChain ["a","x"] (Map.fromList [("a","b"),("b","c")]) = Nothing
+    ```
+
+    *Подсказка:* используйте `foldM` с `Map.lookup`.
 
 ## Заключение
 
-В этой главе мы:
+Монады решают проблему, которую `Applicative` не покрывает: зависимые вычисления, где каждый шаг определяется результатом предыдущего. Оператор `>>=` связывает вычисления в цепочку, а do-нотация делает такой код читаемым — `<-` раскрывается в `>>=`, действие без `<-` — в `>>`. Конкретные монады дают разные «контексты»: `Maybe` — возможное отсутствие, `Either` — ошибки, список — не-детерминизм, `IO` — побочные эффекты, `Reader` — неявное окружение.
 
-- Познакомились с трансформерами монад: `ReaderT`, `StateT`, `ExceptT`.
-- Разобрали стекирование трансформеров для комбинирования эффектов.
-- Освоили `mtl`-классы: `MonadReader`, `MonadState`, `MonadError`.
-- Разобрали исключения в IO: `try`, `catch`, `throwIO`, `bracket` и собственные типы исключений.
-- Применили всё это к текстовой RPG-игре с чистой, тестируемой архитектурой.
+В [следующей главе](chapter13.md) мы столкнёмся с проблемой: что делать, когда нужно *комбинировать* несколько монад — например, `IO` + `Either` + `Reader`? Ответ — **монадные трансформеры** и библиотека `mtl`.
 
-В следующей главе мы перейдём к 2D-графике с библиотекой `gloss`.
+```admonish tip title="Для углубления"
+- **Haskell MOOC** — [haskell.mooc.fi](https://haskell.mooc.fi/), лекция 13: «Monads» — подробный разбор с примерами.
+- **Learn You a Haskell** — глава «A Fistful of Monads»: [learnyouahaskell.com/a-fistful-of-monads](http://learnyouahaskell.com/a-fistful-of-monads).
+- **Typeclassopedia** — раздел о монадах: формальное описание с законами и интуицией.
+```

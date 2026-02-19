@@ -1,37 +1,38 @@
 module MySolutions where
 
-import Data.AddressBook
-import Data.Char (isDigit)
+import Data.Map.Strict qualified as Map
+import TaskTracker
 
--- Упражнение 1: валидатор телефонного номера
+-- | Упражнение 1: Найти задачу по идентификатору.
+lookupTask :: TaskId -> TaskStore -> Maybe Task
+lookupTask = undefined
+
+{- | Упражнение 2: Сериализовать хранилище в строку.
+Формат каждой строки: "id|title|priority|status"
+Например: "1|Релиз|High|Todo"
+-}
+serializeStore :: TaskStore -> String
+serializeStore = undefined
+
+{- | Упражнение 3: Разобрать строку обратно в хранилище.
+При ошибке формата возвращает Left с описанием ошибки.
+-}
+parseStore :: String -> Either String TaskStore
+parseStore = undefined
+
+{- | Упражнение 4: Пронумеровать строки текста.
+"hello\nworld" → "1: hello\n2: world"
+-}
+addNumbers :: String -> String
+addNumbers = undefined
+
+-- Интерактивные IO-упражнения (описаны в тексте главы, не тестируются автоматически):
 --
--- Номер должен быть:
---   - непустым
---   - состоять только из цифр
---   - содержать не менее 7 символов
-
-validatePhoneNumber :: String -> Validation Errors String
-validatePhoneNumber = undefined
-
--- Упражнение 2: комбинирование валидаторов
+-- echoLoop :: IO ()
+-- echoLoop = undefined
 --
--- Используйте <$> и <*> для комбинирования nonEmpty и validateAddress.
-
-validatePerson :: String -> String -> String -> String -> String -> Validation Errors Person
-validatePerson = undefined
-
--- Упражнение 3: traverse с индексом
-
-traverseWithIndex :: Applicative f => (Int -> a -> f b) -> [a] -> f [b]
-traverseWithIndex = undefined
-
--- Упражнение 4: валидация через Either (fail-fast)
+-- interactiveSum :: IO ()
+-- interactiveSum = undefined
 --
--- Реализуйте те же проверки, что и в упражнениях 2,
--- но используя Either String вместо Validation Errors.
-
-eitherValidateAddress :: String -> String -> String -> Either String Address
-eitherValidateAddress = undefined
-
-validatePersonEither :: String -> String -> String -> String -> String -> Either String Person
-validatePersonEither = undefined
+-- numberLines :: IO ()
+-- numberLines = undefined

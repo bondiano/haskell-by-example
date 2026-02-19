@@ -1,85 +1,88 @@
 module Main where
 
-import Test.Hspec
-import Data.List (foldl')
-import Data.Hashable
 import MySolutions
+import TaskTracker
+import Test.Hspec
+
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
+import Data.Set qualified as Set
+import Data.Text (Text)
 
 main :: IO ()
 main = hspec $ do
-  describe "Coord Eq (упражнение 1)" $ do
-    it "равные координаты" $
-      (Coord 1.0 2.0 == Coord 1.0 2.0) `shouldBe` True
+  -- Тестовые данные
+  let task1 = Task "Релиз" High Todo (Set.fromList ["dev", "urgent"])
+      task2 = Task "Документация" Medium InProgress (Set.fromList ["docs"])
+      task3 = Task "Рефакторинг" Low Done (Set.fromList ["dev", "tech-debt"])
+      store =
+        addTask 1 task1
+          . addTask 2 task2
+          . addTask 3 task3
+          $ emptyStore
 
-    it "разные координаты" $
-      (Coord 1.0 2.0 == Coord 3.0 4.0) `shouldBe` False
+  describe "Упражнение 1: storeSize" $ do
+    it "возвращает 0 для пустого хранилища" $
+      storeSize emptyStore `shouldBe` 0
+    it "возвращает 3 для хранилища из трёх задач" $
+      storeSize store `shouldBe` 3
+    it "возвращает 1 после добавления одной задачи" $
+      storeSize (addTask 1 task1 emptyStore) `shouldBe` 1
 
-    it "различие только по x" $
-      (Coord 1.0 2.0 == Coord 9.0 2.0) `shouldBe` False
+  describe "Упражнение 2: updateTaskStatus" $ do
+    it "обновляет статус существующей задачи" $ do
+      let updated = updateTaskStatus 1 Done store
+      fmap taskStatus (lookupTask 1 updated) `shouldBe` Just Done
+    it "не меняет другие задачи" $ do
+      let updated = updateTaskStatus 1 Done store
+      fmap taskStatus (lookupTask 2 updated) `shouldBe` Just InProgress
+    it "не падает при обновлении несуществующей задачи" $ do
+      let updated = updateTaskStatus 999 Done store
+      storeSize updated `shouldBe` 3
 
-    it "различие только по y" $
-      (Coord 1.0 2.0 == Coord 1.0 9.0) `shouldBe` False
+  describe "Упражнение 3: findByTag" $ do
+    it "находит задачи с тегом \"dev\"" $
+      length (findByTag "dev" store) `shouldBe` 2
+    it "находит задачи с тегом \"docs\"" $
+      length (findByTag "docs" store) `shouldBe` 1
+    it "возвращает пустой список для несуществующего тега" $
+      findByTag "nonexistent" store `shouldBe` []
+    it "находит задачи с тегом \"urgent\"" $ do
+      let results = findByTag "urgent" store
+      length results `shouldBe` 1
+      taskTitle (head results) `shouldBe` "Релиз"
 
-  describe "Coord Show (упражнение 1)" $ do
-    it "форматирует как (x, y)" $
-      show (Coord 1.0 2.0) `shouldBe` "(1.0, 2.0)"
+  describe "Упражнение 4: invertMap" $ do
+    it "инвертирует простое отображение" $ do
+      let m = Map.fromList [("a" :: String, 1 :: Int), ("b", 2), ("c", 3)]
+      invertMap m `shouldBe` Map.fromList [(1, "a"), (2, "b"), (3, "c")]
+    it "инвертирует пустое отображение" $
+      invertMap (Map.empty :: Map String Int) `shouldBe` Map.empty
+    it "при дублирующихся значениях сохраняет одно из них" $ do
+      let m = Map.fromList [("a" :: String, 1 :: Int), ("b", 1)]
+          result = invertMap m
+      Map.size result `shouldBe` 1
+      Map.lookup 1 result `shouldSatisfy` \v -> v == Just "a" || v == Just "b"
 
-    it "форматирует отрицательные координаты" $
-      show (Coord (-3.5) 0.0) `shouldBe` "(-3.5, 0.0)"
+  describe "Упражнение 5: commonElements" $ do
+    it "находит общие элементы двух списков" $
+      commonElements [1 :: Int, 2, 3, 4] [3, 4, 5, 6] `shouldBe` [3, 4]
+    it "возвращает пустой список при отсутствии общих элементов" $
+      commonElements [1 :: Int, 2] [3, 4] `shouldBe` []
+    it "работает с пустым списком" $
+      commonElements ([] :: [Int]) [1, 2, 3] `shouldBe` []
+    it "убирает дубликаты" $
+      commonElements [1 :: Int, 1, 2, 2] [1, 2, 2, 3] `shouldBe` [1, 2]
 
-  describe "Hashable Maybe (упражнение 2)" $ do
-    it "Nothing хэшируется в 0" $
-      hash (Nothing :: Maybe Int) `shouldBe` 0
-
-    it "Just 5" $
-      hash (Just (5 :: Int)) `shouldBe` combineHashes 1 5
-
-    it "Just True" $
-      hash (Just True :: Maybe Bool) `shouldBe` combineHashes 1 1
-
-  describe "Hashable Either (упражнение 2)" $ do
-    it "Left 3" $
-      hash (Left 3 :: Either Int Bool) `shouldBe` combineHashes 0 3
-
-    it "Right True" $
-      hash (Right True :: Either Int Bool) `shouldBe` combineHashes 1 1
-
-  describe "Hashable [] (упражнение 2)" $ do
-    it "пустой список" $
-      hash ([] :: [Int]) `shouldBe` 0
-
-    it "один элемент" $
-      hash [5 :: Int] `shouldBe` combineHashes 0 5
-
-    it "несколько элементов" $
-      hash [1, 2, 3 :: Int]
-        `shouldBe` foldl' (\acc x -> combineHashes acc (hash x)) 0 [1, 2, 3 :: Int]
-
-  describe "nubByHash (упражнение 3)" $ do
-    it "удаляет дубликаты" $
-      nubByHash [1, 2, 3, 1, 2 :: Int] `shouldBe` [1, 2, 3]
-
-    it "сохраняет порядок первого вхождения" $
-      nubByHash [3, 1, 2, 1, 3 :: Int] `shouldBe` [3, 1, 2]
-
-    it "пустой список" $
-      nubByHash ([] :: [Int]) `shouldBe` []
-
-    it "без дубликатов — без изменений" $
-      nubByHash [1, 2, 3 :: Int] `shouldBe` [1, 2, 3]
-
-  describe "Brightness (упражнение 4)" $ do
-    it "show" $
-      show (Brightness 42) `shouldBe` "Brightness {getBrightness = 42}"
-
-    it "равенство" $
-      (Brightness 10 == Brightness 10) `shouldBe` True
-
-    it "неравенство" $
-      (Brightness 10 == Brightness 20) `shouldBe` False
-
-    it "сложение (Num)" $
-      Brightness 10 + Brightness 20 `shouldBe` Brightness 30
-
-    it "хэширование" $
-      hash (Brightness 42) `shouldBe` 42
+  describe "Упражнение 6: wordFrequency" $ do
+    it "считает частоту слов" $ do
+      let result = wordFrequency "hello world hello"
+      Map.lookup "hello" result `shouldBe` Just 2
+      Map.lookup "world" result `shouldBe` Just 1
+    it "приводит слова к нижнему регистру" $ do
+      let result = wordFrequency "Hello HELLO hello"
+      Map.lookup "hello" result `shouldBe` Just 3
+    it "возвращает пустое отображение для пустой строки" $
+      wordFrequency "" `shouldBe` Map.empty
+    it "корректно работает с одним словом" $
+      wordFrequency "Haskell" `shouldBe` Map.fromList [("haskell", 1)]

@@ -6,15 +6,13 @@ cabal-version: 1.12
 
 name:           chapter14
 version:        0.1.0.0
-synopsis:       Haskell by Example — Глава 14: Генеративное тестирование
+synopsis:       Haskell by Example — Глава 14: JSON и сериализация
 license:        MIT
 build-type:     Simple
 
 library
   exposed-modules:
-      Data.BST
-      Data.MergeSort
-      Data.Person
+      TaskTracker
   other-modules:
       Paths_chapter14
   hs-source-dirs:
@@ -36,7 +34,10 @@ library
       NumericUnderscores
       ImportQualifiedPost
   build-depends:
-      base >=4.18 && <5
+      aeson
+    , base >=4.18 && <5
+    , bytestring
+    , text
   default-language: Haskell2010
 
 test-suite chapter14-tests
@@ -64,8 +65,10 @@ test-suite chapter14-tests
       NumericUnderscores
       ImportQualifiedPost
   build-depends:
-      QuickCheck
+      aeson
     , base >=4.18 && <5
+    , bytestring
     , chapter14
     , hspec
+    , text
   default-language: Haskell2010

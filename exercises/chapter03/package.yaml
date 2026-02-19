@@ -1,6 +1,6 @@
 name: chapter03
 version: 0.1.0.0
-synopsis: "Haskell by Example — Глава 3: Функции и записи"
+synopsis: "Haskell by Example — Глава 3: Алгебраические типы и паттерн-матчинг"
 license: MIT
 
 default-extensions:

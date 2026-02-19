@@ -1,86 +1,114 @@
 module Main where
 
+import AddressBook
+import MySolutions (
+  describeStatus,
+  describeTasks,
+  entryExists,
+  findEntryByStreet,
+  isUrgent,
+  nextStatus,
+  removeDuplicates,
+ )
+import TaskTracker
 import Test.Hspec
-import Data.AddressBook
-import MySolutions (findEntryByStreet, entryExists, removeDuplicates)
-
-addressMoscow :: Address
-addressMoscow = Address
-  { street = "ул. Пушкина, 10"
-  , city   = "Москва"
-  , state  = "Москва"
-  }
-
-addressSpb :: Address
-addressSpb = Address
-  { street = "Невский пр., 28"
-  , city   = "Санкт-Петербург"
-  , state  = "Санкт-Петербург"
-  }
-
-ivan :: Entry
-ivan = Entry
-  { firstName = "Иван"
-  , lastName  = "Петров"
-  , address   = addressMoscow
-  }
-
-anna :: Entry
-anna = Entry
-  { firstName = "Анна"
-  , lastName  = "Сидорова"
-  , address   = addressSpb
-  }
-
-ivanDup :: Entry
-ivanDup = Entry
-  { firstName = "Иван"
-  , lastName  = "Петров"
-  , address   = addressSpb
-  }
-
-book :: AddressBook
-book = insertEntry ivan $ insertEntry anna emptyBook
-
-bookWithDup :: AddressBook
-bookWithDup = insertEntry ivanDup book
 
 main :: IO ()
 main = hspec $ do
-  describe "showEntry / showAddress" $ do
-    it "форматирует адрес" $
-      showAddress addressMoscow `shouldBe` "ул. Пушкина, 10, Москва, Москва"
-
-    it "форматирует запись" $
-      showEntry ivan `shouldBe` "Петров, Иван: ул. Пушкина, 10, Москва, Москва"
-
-  describe "insertEntry / findEntry" $ do
-    it "находит существующую запись" $
-      findEntry "Иван" "Петров" book `shouldBe` Just ivan
-
-    it "возвращает Nothing для несуществующей записи" $
-      findEntry "Пётр" "Иванов" book `shouldBe` Nothing
-
+  -- Тесты адресной книги
   describe "findEntryByStreet" $ do
     it "находит запись по улице" $
-      findEntryByStreet "Невский пр., 28" book `shouldBe` Just anna
+      fmap firstName (findEntryByStreet "123 Main St" exampleBook)
+        `shouldBe` Just "John"
+
+    it "находит другую запись по улице" $
+      fmap firstName (findEntryByStreet "456 Oak Ave" exampleBook)
+        `shouldBe` Just "Jane"
 
     it "возвращает Nothing для несуществующей улицы" $
-      findEntryByStreet "ул. Ленина, 1" book `shouldBe` Nothing
+      findEntryByStreet "999 Unknown Rd" exampleBook `shouldBe` Nothing
+
+    it "возвращает Nothing для пустой книги" $
+      findEntryByStreet "123 Main St" [] `shouldBe` Nothing
 
   describe "entryExists" $ do
     it "возвращает True для существующей записи" $
-      entryExists "Анна" "Сидорова" book `shouldBe` True
+      entryExists "John" "Smith" exampleBook `shouldBe` True
+
+    it "возвращает True для другой существующей записи" $
+      entryExists "Jane" "Doe" exampleBook `shouldBe` True
 
     it "возвращает False для несуществующей записи" $
-      entryExists "Пётр" "Иванов" book `shouldBe` False
+      entryExists "Bob" "Jones" exampleBook `shouldBe` False
+
+    it "возвращает False для пустой книги" $
+      entryExists "John" "Smith" [] `shouldBe` False
 
   describe "removeDuplicates" $ do
     it "удаляет дубликаты по имени и фамилии" $
-      length (removeDuplicates bookWithDup) `shouldBe` 2
+      length (removeDuplicates exampleBook) `shouldBe` 2
 
-    it "сохраняет первую запись из дубликатов" $
-      removeDuplicates bookWithDup `shouldBe` [ivanDup, anna]
+    it "сохраняет первое вхождение" $ do
+      let result = removeDuplicates exampleBook
+      case findEntryByStreet "123 Main St" result of
+        Just e -> firstName e `shouldBe` "John"
+        Nothing -> expectationFailure "Первая запись John Smith должна остаться"
 
-    it "не меняет книгу без дубликатов" $
+    it "не меняет книгу без дубликатов" $ do
+      let book = [Entry "A" "B" (Address "1" "2" "3")]
       removeDuplicates book `shouldBe` book
+
+    it "возвращает пустой список для пустого входа" $
+      removeDuplicates [] `shouldBe` []
+
+  -- Тесты паттерн-матчинга по статусу
+  describe "describeStatus" $ do
+    it "описывает Todo" $
+      describeStatus Todo `shouldBe` "[ ] К выполнению"
+
+    it "описывает InProgress" $
+      describeStatus InProgress `shouldBe` "[~] В работе"
+
+    it "описывает Done" $
+      describeStatus Done `shouldBe` "[x] Готово"
+
+  describe "isUrgent" $ do
+    it "True для High + Todo" $
+      isUrgent (Task "A" "" High Todo) `shouldBe` True
+
+    it "True для High + InProgress" $
+      isUrgent (Task "A" "" High InProgress) `shouldBe` True
+
+    it "False для High + Done" $
+      isUrgent (Task "A" "" High Done) `shouldBe` False
+
+    it "False для Medium + Todo" $
+      isUrgent (Task "A" "" Medium Todo) `shouldBe` False
+
+    it "False для Low + Todo" $
+      isUrgent (Task "A" "" Low Todo) `shouldBe` False
+
+  describe "nextStatus" $ do
+    it "Todo переходит в InProgress" $
+      nextStatus Todo `shouldBe` InProgress
+
+    it "InProgress переходит в Done" $
+      nextStatus InProgress `shouldBe` Done
+
+    it "Done остаётся Done" $
+      nextStatus Done `shouldBe` Done
+
+  describe "describeTasks" $ do
+    it "описывает exampleTasks" $
+      describeTasks exampleTasks `shouldBe` "4 задач(и), из них 2 срочных"
+
+    it "описывает пустой список" $
+      describeTasks [] `shouldBe` "0 задач(и), из них 0 срочных"
+
+    it "описывает список без срочных" $ do
+      let tasks = [Task "A" "" Low Todo, Task "B" "" Medium Done]
+      describeTasks tasks `shouldBe` "2 задач(и), из них 0 срочных"
+
+    it "описывает список только из срочных" $ do
+      let tasks = [Task "A" "" High Todo, Task "B" "" High InProgress]
+      describeTasks tasks `shouldBe` "2 задач(и), из них 2 срочных"

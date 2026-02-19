@@ -1,6 +1,6 @@
 name: chapter11
 version: 0.1.0.0
-synopsis: "Haskell by Example — Глава 11: Интерфейс внешних функций (FFI)"
+synopsis: "Haskell by Example — Глава 11: Functor и Applicative"
 license: MIT
 
 default-extensions:
@@ -22,12 +22,11 @@ default-extensions:
 
 dependencies:
   - base >= 4.18 && < 5
-  - aeson
-  - bytestring
-  - text
 
 library:
   source-dirs: src
+  dependencies:
+    - text
 
 tests:
   chapter11-tests:
@@ -36,4 +35,4 @@ tests:
     dependencies:
       - chapter11
       - hspec
-      - directory
+      - text

@@ -1,354 +1,478 @@
-# GADTs и семейства типов
+# Конкурентность и async
 
-## Цели главы
+В предыдущей главе мы организовали трекер задач в модульную структуру. Теперь научим его работать быстрее. GHC предоставляет лёгкие потоки (green threads), а библиотеки `async` и `stm` — высокоуровневые примитивы для параллельного и конкурентного кода. В этой главе мы пройдём от низкоуровневого `forkIO` и `MVar` до `concurrently`, `race`, `mapConcurrently` и транзакционной памяти (STM). Завершим главу параллельным импортом задач с прогрессом и тайм-аутами.
 
-В этой главе мы выйдем за рамки обычных алгебраических типов данных. Мы познакомимся с GADTs (Generalized Algebraic Data Types) — расширением, позволяющим кодировать инварианты прямо в типах. Компилятор будет проверять корректность на этапе компиляции, делая целые классы ошибок невозможными.
+## Лёгкие потоки
 
-Мы также разберём DataKinds и семейства типов (Type Families) — механизм вычислений на уровне типов.
+### Модель конкурентности GHC
 
-## Ограничения обычных АТД
+GHC использует **лёгкие потоки** (green threads), которыми управляет рантайм. Они дешёвые: создание за микросекунды, ~1 КБ памяти на поток. Можно создать сотни тысяч потоков. Рантайм мультиплексирует их на OS-потоки (по числу ядер при компиляции с `-threaded`).
 
-В главе 15 мы строили DSL с типом выражений:
+```admonish tip title="Знакомый аналог"
+**Go:** горутины — практически та же модель. `go func()` ~ `forkIO action`.
+**TypeScript:** `Promise.all()` ~ `mapConcurrently`. Но JS однопоточен (event loop), а GHC использует несколько ядер.
+**Python:** `asyncio` — кооперативная многозадачность в одном потоке.
+```
+
+### forkIO и threadDelay
 
 ```haskell
-data Expr
-  = Lit Int
-  | BoolLit Bool
-  | Add Expr Expr
-  | If Expr Expr Expr
+import Control.Concurrent (forkIO, threadDelay)
+
+forkIO :: IO () -> IO ThreadId
 ```
 
-Проблема: `Add (BoolLit True) (Lit 1)` — складываем булево значение с числом. Тип `Expr` это допускает, и ошибка обнаружится только в рантайме:
+`forkIO` принимает IO-действие и запускает его в новом потоке, немедленно возвращая `ThreadId`. Вызывающий поток продолжает работу параллельно с дочерним:
 
 ```haskell
-eval :: Expr -> ???  -- Какой тип возвращать? Int? Bool?
+main :: IO ()
+main = do
+  putStrLn "Главный поток: старт"
+  _ <- forkIO $ do
+    putStrLn "Дочерний поток: начал"
+    threadDelay 1_000_000  -- 1 секунда (микросекунды)
+    putStrLn "Дочерний поток: завершился"
+  putStrLn "Главный поток: продолжает"
+  threadDelay 2_000_000
+  putStrLn "Главный поток: конец"
 ```
 
-Функция `eval` вынуждена возвращать что-то вроде `Either String Value`, обрабатывая ошибки типов вручную. Но ведь компилятор *мог бы* проверить это за нас — если бы тип выражения нёс информацию о типе результата.
+`threadDelay n` приостанавливает поток на `n` микросекунд. `NumericUnderscores` позволяет писать `1_000_000`.
 
-## Фантомные типы
+```admonish warning title="Проблема с forkIO"
+Если главный поток завершится раньше дочернего — дочерний будет убит. `forkIO` не даёт способа получить результат или узнать об исключении. Для продакшн-кода используйте `async`.
+```
 
-Первый шаг — **фантомные типы**: параметр типа, который не используется в конструкторах:
+## MVar
+
+`MVar a` — мутабельная ячейка, которая может быть **пустой** или **заполненной**:
 
 ```haskell
-newtype Tagged (tag :: Symbol) a = Tagged a
+import Control.Concurrent.MVar
 
-type Meters  = Tagged "meters"  Double
-type Seconds = Tagged "seconds" Double
+newEmptyMVar :: IO (MVar a)          -- пустая ячейка
+newMVar      :: a -> IO (MVar a)     -- заполненная
+putMVar      :: MVar a -> a -> IO () -- положить (блокирует, если заполнена)
+takeMVar     :: MVar a -> IO a       -- взять (блокирует, если пуста)
+readMVar     :: MVar a -> IO a       -- прочитать без извлечения
 ```
 
-Теперь `Meters` и `Seconds` — разные типы, хотя оба содержат `Double`:
+Ключевое свойство блокировки: `takeMVar` ждёт, пока ячейка не станет заполненной, а `putMVar` — пока не станет пустой. Это делает `MVar` естественным примитивом синхронизации и передачи данных между потоками.
 
-```text
-> Tagged 5.0 :: Meters
-Tagged 5.0
-
-> (Tagged 5.0 :: Meters) + (Tagged 3.0 :: Seconds)
-<ошибка типов!>
-```
-
-Ограничение фантомных типов: при *конструировании* мы выбираем тег свободно, компилятор не проверяет соответствие значения и тега. Для этого нужны GADTs.
-
-## GADTs
-
-### Синтаксис
-
-Расширение `GADTs` позволяет каждому конструктору явно задать *возвращаемый тип*:
+### MVar как канал для результата
 
 ```haskell
-{-# LANGUAGE GADTs #-}
-
-data Expr a where
-  ILit :: Int -> Expr Int
-  BLit :: Bool -> Expr Bool
-  Add  :: Expr Int -> Expr Int -> Expr Int
-  Eql  :: Eq a => Expr a -> Expr a -> Expr Bool
-  If   :: Expr Bool -> Expr a -> Expr a -> Expr a
-  Not  :: Expr Bool -> Expr Bool
-  And  :: Expr Bool -> Expr Bool -> Expr Bool
-  Gt   :: Ord a => Expr a -> Expr a -> Expr Bool
+computeInThread :: IO ()
+computeInThread = do
+  resultVar <- newEmptyMVar
+  _ <- forkIO $ do
+    let result = sum [1..1_000_000 :: Int]
+    putMVar resultVar result
+  putStrLn "Ожидаем..."
+  result <- takeMVar resultVar
+  putStrLn $ "Результат: " <> show result
 ```
 
-Ключевое отличие от обычных АТД: каждый конструктор может возвращать `Expr` с *разным* параметром. `ILit` возвращает `Expr Int`, `BLit` — `Expr Bool`, `Add` принимает только `Expr Int`.
+Дочерний поток вычисляет сумму и кладёт результат через `putMVar`. Главный поток блокируется на `takeMVar` ровно до тех пор, пока дочерний не завершится. Это простейший способ дождаться результата из другого потока.
 
-Теперь `Add (BLit True) (ILit 1)` — **ошибка компиляции**: `Add` ожидает `Expr Int`, а `BLit True` имеет тип `Expr Bool`.
+### Потокобезопасный счётчик
 
-### Уточнение типа при сопоставлении (type refinement)
-
-Самое мощное свойство GADTs — при сопоставлении с образцом компилятор *уточняет* переменную типа:
+Реализуем счётчик, который можно безопасно инкрементировать из нескольких потоков одновременно:
 
 ```haskell
-eval :: Expr a -> a
-eval (ILit n)   = n           -- здесь GHC знает: a ~ Int
-eval (BLit b)   = b           -- здесь GHC знает: a ~ Bool
-eval (Add x y)  = eval x + eval y   -- a ~ Int, (+) :: Int -> Int -> Int
-eval (Eql x y)  = eval x == eval y  -- a ~ Bool, Eq a — из конструктора
-eval (If c t e) = if eval c then eval t else eval e
-eval (Not x)    = not (eval x)
-eval (And x y)  = eval x && eval y
-eval (Gt x y)   = eval x > eval y   -- Ord a — из конструктора
+type Counter = MVar Int
+
+newCounter :: IO Counter
+newCounter = newMVar 0
+
+increment :: Counter -> IO ()
+increment counter = do
+  n <- takeMVar counter
+  putMVar counter (n + 1)
+
+getCount :: Counter -> IO Int
+getCount = readMVar
 ```
 
-Обратите внимание: `eval` — **тотальная** функция. Все случаи покрыты, и в каждой ветке компилятор гарантирует правильный тип. Никаких `Either`, никаких рантайм-ошибок.
+```admonish warning title="Проблемы MVar"
+`MVar` подвержен дедлокам, гонкам и утечкам (если поток упал, `MVar` может остаться пустым). Для сложной синхронизации предпочитайте STM или `async`.
+```
 
-### Экзистенциальные типы
+## Библиотека async
 
-GADTs позволяют «упаковать» значение, скрыв его конкретный тип:
+### Зачем async
+
+Библиотека **async** предоставляет высокоуровневый API поверх потоков: получение результата, проброс исключений, гарантии завершения.
+
+```yaml
+# package.yaml
+dependencies:
+  - async
+```
+
+### async и wait
 
 ```haskell
-data SomeExpr = forall a. Show a => SomeExpr (Expr a)
+import Control.Concurrent.Async
+
+async :: IO a -> IO (Async a)
+wait  :: Async a -> IO a
 ```
 
-`SomeExpr` — контейнер для `Expr a` с *неизвестным* `a`. Единственное, что мы знаем — `a` имеет `Show`:
+`async` запускает действие в фоне и возвращает дескриптор `Async a`. `wait` блокируется до завершения и возвращает результат (или пробрасывает исключение). Ключевое отличие от `forkIO`: результат доступен, и исключение в дочернем потоке не теряется.
 
 ```haskell
-showSomeExpr :: SomeExpr -> String
-showSomeExpr (SomeExpr e) = show (eval e)
-
-exprs :: [SomeExpr]
-exprs = [SomeExpr (ILit 42), SomeExpr (BLit True), SomeExpr (Add (ILit 1) (ILit 2))]
+example :: IO ()
+example = do
+  a1 <- async $ threadDelay 1_000_000 >> pure (42 :: Int)
+  a2 <- async $ threadDelay 500_000   >> pure (17 :: Int)
+  r1 <- wait a1
+  r2 <- wait a2
+  putStrLn $ "Результаты: " <> show r1 <> ", " <> show r2
 ```
 
-```text
-> map showSomeExpr exprs
-["42","True","3"]
-```
+Оба вычисления параллельны. `wait` пробрасывает исключения из дочернего потока.
 
-Гетерогенный список! Каждый элемент содержит `Expr` с разным `a`, но все можно показать через `show`.
+### withAsync
 
-## DataKinds
-
-Расширение `DataKinds` **промотирует** обычные типы данных в кайнды, а их конструкторы — в типы:
+Гарантирует отмену потока при выходе из блока:
 
 ```haskell
-{-# LANGUAGE DataKinds #-}
-
-data Nat = Zero | Succ Nat
+withAsync :: IO a -> (Async a -> IO b) -> IO b
 ```
 
-Без `DataKinds`:
-- `Nat` — тип с кайндом `Type`
-- `Zero`, `Succ` — конструкторы данных (значения)
+Если вычисление завершится или бросит исключение, `withAsync` автоматически отменит дочерний поток. Используйте вместо `async`/`cancel` вручную — так не забудете прибраться.
 
-С `DataKinds`:
-- `Nat` — *кайнд*
-- `'Zero` — тип с кайндом `Nat`
-- `'Succ` — конструктор типов с кайндом `Nat -> Nat`
+### concurrently
 
-Апостроф `'` отличает промотированный конструктор от одноимённого конструктора данных.
-
-Теперь `Nat` можно использовать как параметр типа:
+Запускает два действия параллельно и возвращает оба результата:
 
 ```haskell
-data Vec (n :: Nat) a where
-  VNil  :: Vec 'Zero a
-  VCons :: a -> Vec n a -> Vec ('Succ n) a
+concurrently :: IO a -> IO b -> IO (a, b)
 ```
 
-`Vec` — вектор, длина которого закодирована в типе. `VNil` создаёт вектор длины `'Zero`, `VCons` увеличивает длину на один.
-
-## Семейства типов (Type Families)
-
-Семейства типов — это *функции на уровне типов*: они принимают типы и возвращают типы.
-
-### Закрытые семейства типов
-
-Закрытое семейство определяется одним блоком — все уравнения в одном месте:
+В отличие от `async`+`wait`, `concurrently` — высокоуровневая обёртка: не нужно вручную управлять дескрипторами. Оба действия стартуют одновременно, функция ждёт завершения обоих и возвращает пару результатов:
 
 ```haskell
-type family Add (a :: Nat) (b :: Nat) :: Nat where
-  Add 'Zero     b = b
-  Add ('Succ a) b = 'Succ (Add a b)
+fetchBoth :: IO ()
+fetchBoth = do
+  (users, tasks) <- concurrently fetchUsers fetchTasks
+  putStrLn $ "Пользователей: " <> show (length users)
+  putStrLn $ "Задач: " <> show (length tasks)
+  where
+    fetchUsers = threadDelay 1_000_000 >> pure ["Alice", "Bob"]
+    fetchTasks = threadDelay 800_000   >> pure ["Задача 1", "Задача 2"]
 ```
 
-Это сложение натуральных чисел, но на уровне *типов*. GHC вычисляет `Add ('Succ 'Zero) ('Succ 'Zero)` и получает `'Succ ('Succ 'Zero)` — во время компиляции.
+Если одно из действий бросает исключение, второе отменяется.
 
-### Открытые семейства типов
+### mapConcurrently
 
-Открытое семейство можно расширять новыми уравнениями в любом модуле:
+Применяет IO-действие к каждому элементу параллельно:
 
 ```haskell
-type family Element (c :: Type) :: Type
-type instance Element [a]       = a
-type instance Element (Set a)   = a
-type instance Element (Map k v) = (k, v)
+mapConcurrently :: Traversable t => (a -> IO b) -> t a -> IO (t b)
 ```
 
-Новые экземпляры добавляются через `type instance` в произвольных модулях.
+Все действия запускаются одновременно; функция ждёт завершения всех и возвращает результаты в том же порядке, что и входная коллекция. При исключении в любом из потоков остальные отменяются.
 
-### Ассоциированные семейства типов
+```admonish tip title="Знакомый аналог"
+**TypeScript:** `Promise.all(urls.map(url => fetch(url)))` ~ `mapConcurrently fetch urls`.
+**Go:** `errgroup.Group` с горутинами.
+**Python:** `asyncio.gather(...)`.
+```
 
-Семейство типов можно привязать к классу типов:
+### race
+
+Возвращает результат **первого** завершившегося действия, второе отменяет:
 
 ```haskell
-class Container c where
-  type Elem c :: Type        -- ассоциированное семейство
-  empty  :: c
-  insert :: Elem c -> c -> c
-  toList :: c -> [Elem c]
+race :: IO a -> IO b -> IO (Either a b)
 ```
 
-`Elem c` определяется в каждом экземпляре:
+Паттерн тайм-аута:
 
 ```haskell
-instance Container [a] where
-  type Elem [a] = a
-  empty  = []
-  insert x xs = xs ++ [x]
-  toList = id
-
-instance Ord a => Container (Set a) where
-  type Elem (Set a) = a
-  empty  = Set.empty
-  insert = Set.insert
-  toList = Set.toList
-
-instance Ord k => Container (Map k v) where
-  type Elem (Map k v) = (k, v)
-  empty  = Map.empty
-  insert (k, v) = Map.insert k v
-  toList = Map.toList
+withTimeout :: Int -> IO a -> IO (Maybe a)
+withTimeout micros action =
+  race (threadDelay micros) action >>= \case
+    Left ()     -> pure Nothing
+    Right result -> pure (Just result)
 ```
 
-Теперь можно писать обобщённые функции:
+### Комбинирование
+
+Примитивы `race`, `concurrently` и `withTimeout` хорошо компонуются. Вот реальный паттерн: попробовать два источника параллельно, взять первый ответ, но не ждать дольше 2 секунд:
 
 ```haskell
-containerFromList :: Container c => [Elem c] -> c
-containerFromList = foldl' (flip insert) empty
+fetchWithFallback :: IO String
+fetchWithFallback = do
+  result <- withTimeout 2_000_000 $
+    race fetchFromPrimary fetchFromBackup
+  case result of
+    Nothing          -> pure "Оба источника не ответили"
+    Just (Left msg)  -> pure $ "Primary: " <> msg
+    Just (Right msg) -> pure $ "Backup: " <> msg
+  where
+    fetchFromPrimary = threadDelay 1_000_000 >> pure "данные от Primary"
+    fetchFromBackup  = threadDelay 1_500_000 >> pure "данные от Backup"
 ```
 
-```text
-> containerFromList [3, 1, 2] :: Set Int
-fromList [1,2,3]
+Primary ответит через 1 с, Backup — через 1.5 с. Тайм-аут — 2 с. Результат: `"Primary: данные от Primary"`, а Backup отменяется через `race`.
 
-> containerFromList [("a", 1), ("b", 2)] :: Map String Int
-fromList [("a",1),("b",2)]
-```
+## STM — Software Transactional Memory
 
-Одна функция — разные контейнеры, типобезопасно.
+### Проблема с MVar
 
-## Длина в типе: `Vec n a`
-
-Соберём всё вместе: `DataKinds`, `GADTs` и семейства типов.
+При нескольких разделяемых переменных `MVar` не обеспечивает атомарность:
 
 ```haskell
-data Vec (n :: Nat) (a :: Type) where
-  VNil  :: Vec 'Zero a
-  VCons :: a -> Vec n a -> Vec ('Succ n) a
+-- ОПАСНО: между двумя операциями состояние несогласованно
+transfer :: MVar Int -> MVar Int -> Int -> IO ()
+transfer from to amount = do
+  balance <- takeMVar from
+  putMVar from (balance - amount)
+  -- другой поток видит неконсистентное состояние!
+  balance2 <- takeMVar to
+  putMVar to (balance2 + amount)
 ```
 
-### Тотальная `vhead`
+### TVar и atomically
 
-Обычный `head :: [a] -> a` — частичная функция (падает на пустом списке). С `Vec` мы можем написать тотальную версию:
+**STM** использует **транзакции**: изолированные, автоматически перезапускаемые, композируемые.
 
 ```haskell
-vhead :: Vec ('Succ n) a -> a
-vhead (VCons x _) = x
+import Control.Concurrent.STM
+
+newTVar    :: a -> STM (TVar a)
+readTVar   :: TVar a -> STM a
+writeTVar  :: TVar a -> a -> STM ()
+modifyTVar :: TVar a -> (a -> a) -> STM ()
+atomically :: STM a -> IO a
 ```
 
-Тип гарантирует, что вектор непустой: `'Succ n` не может быть `'Zero`. Паттерн-матчинг исчерпывающий — `VNil` невозможен.
+Все операции в `STM`, не в `IO`. `atomically` выполняет транзакцию атомарно.
 
-### Операции с гарантированными длинами
+### Атомарный перевод
 
 ```haskell
-vtail :: Vec ('Succ n) a -> Vec n a
-vtail (VCons _ xs) = xs
+type Account = TVar Int
 
-vzip :: Vec n a -> Vec n b -> Vec n (a, b)
-vzip VNil VNil = VNil
-vzip (VCons a as) (VCons b bs) = VCons (a, b) (vzip as bs)
+transfer :: Account -> Account -> Int -> STM ()
+transfer from to amount = do
+  balanceFrom <- readTVar from
+  balanceTo   <- readTVar to
+  writeTVar from (balanceFrom - amount)
+  writeTVar to   (balanceTo + amount)
 ```
 
-`vzip` принимает два вектора *одинаковой* длины `n`. Попытка вызвать `vzip` с векторами разной длины — ошибка компиляции.
-
-### Конкатенация с семейством типов
+Другие потоки видят либо старое состояние обоих счетов, либо новое. Промежуточных нет.
 
 ```haskell
-vappend :: Vec n a -> Vec m a -> Vec (Add n m) a
-vappend VNil ys = ys
-vappend (VCons x xs) ys = VCons x (vappend xs ys)
+bankDemo :: IO ()
+bankDemo = do
+  alice <- newTVarIO 1000
+  bob   <- newTVarIO 500
+  mapConcurrently_ id
+    [ atomically (transfer alice bob 100)
+    , atomically (transfer bob alice 50)
+    , atomically (transfer alice bob 200)
+    ]
+  aliceBalance <- readTVarIO alice
+  bobBalance   <- readTVarIO bob
+  putStrLn $ "Alice: " <> show aliceBalance  -- 750
+  putStrLn $ "Bob: "   <> show bobBalance     -- 750
 ```
 
-Тип возвращаемого значения — `Vec (Add n m) a`. GHC использует семейство `Add` для вычисления длины результата на уровне типов.
+Три перевода выполняются параллельно, но итог детерминирован: суммарный баланс (1500) не меняется. Alice отдала 100 + 200 = 300 и получила 50; итого 750. Bob получил 100 + 200 = 300 и отдал 50; итого 750.
 
-## Когда (не) использовать GADTs
+```admonish note title="Почему STM безопасна"
+STM использует оптимистичную конкурентность: при фиксации рантайм проверяет, не изменились ли прочитанные переменные. Если изменились — перезапуск. Поэтому STM-транзакции не должны выполнять IO — перезапуск повторит побочные эффекты.
+```
 
-### Преимущества
+### retry и orElse
 
-- **Инварианты в типах** — компилятор проверяет корректность.
-- **Тотальные функции** — `vhead` не может упасть.
-- **Отсутствие рантайм-ошибок** — `eval` не возвращает `Either`.
+`retry` приостанавливает транзакцию до изменения прочитанных `TVar`:
 
-### Недостатки
+```haskell
+withdraw :: Account -> Int -> STM ()
+withdraw account amount = do
+  balance <- readTVar account
+  if balance < amount
+    then retry
+    else writeTVar account (balance - amount)
+```
 
-- **Сложность типов** — код становится труднее читать.
-- **Потеря вывода типов** — сигнатуры типов часто обязательны.
-- **Несовместимость с `deriving`** — нужен `StandaloneDeriving`.
-- **Инфраструктурный налог** — `DataKinds`, `TypeFamilies`, `UndecidableInstances`.
+`orElse` пробует первую транзакцию; при `retry` — вторую:
 
-### Правило
+```haskell
+withdrawFromEither :: Account -> Account -> Int -> STM ()
+withdrawFromEither acc1 acc2 amount =
+  withdraw acc1 amount `orElse` withdraw acc2 amount
+```
 
-Если инвариант можно обеспечить обычными АТД + smart constructors — используйте их. GADTs — для случаев, когда типовая безопасность критична и окупает усложнение (DSL-интерпретаторы, протоколы, индексированные структуры).
+`withdrawFromEither` попытается снять с `acc1`; если баланса недостаточно — `retry` сигнализирует о неудаче, и `orElse` переключается на `acc2`. Вся транзакция блокируется до тех пор, пока один из счетов не сможет выдать нужную сумму.
+
+```admonish tip title="Знакомый аналог"
+STM не имеет прямых аналогов в mainstream-языках. Ближайшие:
+- **Go:** каналы + select (похожи на retry/orElse, но ограничены каналами).
+- **Clojure:** `ref` + `dosync` — ближайший аналог.
+Haskell-реализация STM считается эталонной благодаря композируемости и гарантиям типов.
+```
+
+### TChan — транзакционный канал
+
+```haskell
+newTChan   :: STM (TChan a)
+writeTChan :: TChan a -> a -> STM ()
+readTChan  :: TChan a -> STM a  -- блокирует, если пуст
+```
+
+`TChan` — транзакционная очередь FIFO. `readTChan` блокируется (через `retry`) до появления элемента. В отличие от каналов на `MVar`, несколько читателей и писателей могут работать с `TChan` одновременно без дедлоков.
+
+## Проект: параллельный импорт задач
+
+### Прогресс через TVar
+
+Используем три `TVar`: хранилище задач, следующий доступный идентификатор и счётчик прогресса. Каждый файл обрабатывается в своём потоке через `mapConcurrently_`, обновления состояния атомарны через `atomically`.
+
+```haskell
+data ImportProgress = ImportProgress
+  { ipTotal :: Int, ipCompleted :: Int, ipFailed :: Int, ipErrors :: [String]
+  } deriving (Show)
+
+importTasks :: [FilePath] -> IO (TaskStore, ImportProgress)
+importTasks files = do
+  progressVar <- newTVarIO (ImportProgress (length files) 0 0 [])
+  storeVar    <- newTVarIO emptyStore
+  nextIdVar   <- newTVarIO (1 :: TaskId)
+
+  withAsync (monitorProgress progressVar) $ \_ ->
+    mapConcurrently_ (importFile storeVar nextIdVar progressVar) files
+
+  finalStore    <- readTVarIO storeVar
+  finalProgress <- readTVarIO progressVar
+  pure (finalStore, finalProgress)
+
+importFile :: TVar TaskStore -> TVar TaskId -> TVar ImportProgress
+           -> FilePath -> IO ()
+importFile storeVar nextIdVar progressVar path = do
+  result <- tryReadTaskFile path
+  atomically $ case result of
+    Left err -> modifyTVar progressVar $ \p ->
+      p { ipFailed = ipFailed p + 1, ipErrors = err : ipErrors p
+        , ipCompleted = ipCompleted p + 1 }
+    Right tasks -> do
+      forM_ tasks $ \task -> do
+        nextId <- readTVar nextIdVar
+        store  <- readTVar storeVar
+        let (newStore, newId) = addTask task nextId store
+        writeTVar storeVar newStore
+        writeTVar nextIdVar newId
+      modifyTVar progressVar $ \p -> p { ipCompleted = ipCompleted p + 1 }
+```
+
+Весь блок `atomically` выполняется неделимо: если два потока попытаются добавить задачи одновременно, STM разрешит конфликт, повторно выполнив одну из транзакций.
+
+### Мониторинг прогресса
+
+Параллельно с импортом `withAsync` запускает монитор, который каждые 200 мс печатает текущий прогресс. Функция `fix` реализует цикл без явной рекурсии.
+
+```haskell
+monitorProgress :: TVar ImportProgress -> IO ()
+monitorProgress progressVar = fix $ \loop -> do
+  progress <- readTVarIO progressVar
+  putStrLn $ "Прогресс: " <> show (ipCompleted progress)
+    <> "/" <> show (ipTotal progress)
+    <> " (ошибок: " <> show (ipFailed progress) <> ")"
+  if ipCompleted progress >= ipTotal progress
+    then putStrLn "Импорт завершён!"
+    else threadDelay 200_000 >> loop
+```
+
+### Импорт с тайм-аутом
+
+`race` гарантирует, что импорт завершится не дольше заданного времени: победит либо `threadDelay` (тайм-аут), либо `importTasks` (успех).
+
+```haskell
+importWithTimeout :: Int -> [FilePath] -> IO (TaskStore, ImportProgress)
+importWithTimeout timeoutMicros files = do
+  result <- race (threadDelay timeoutMicros) (importTasks files)
+  case result of
+    Left ()              -> do
+      putStrLn "Импорт прерван по таймауту!"
+      pure (emptyStore, ImportProgress (length files) 0 0 ["Таймаут"])
+    Right (store, progress) -> pure (store, progress)
+```
 
 ## Упражнения
 
 Решения пишите в `test/MySolutions.hs`. Проверяйте: `stack test`.
 
-Модуль `Data.Expr.Typed` предоставляет GADT `Expr a`. Модуль `Data.Vec` — типы `Nat`, `Vec n a` и семейство `Add`. Модуль `Data.Container` — класс `Container` с ассоциированным семейством `Elem`.
+### Проект ★☆☆
 
-1. **(Лёгкое)** Реализуйте вычислитель выражений:
-
-    ```haskell
-    eval :: Expr a -> a
-    ```
-
-    Компилятор гарантирует корректность типов — `eval` тотальна. При матчинге на `ILit` компилятор знает, что `a ~ Int`; на `BLit` — что `a ~ Bool`.
-
-2. **(Среднее)** Реализуйте красивую печать выражений:
+1. Реализуйте потокобезопасный счётчик на `MVar`. Проверьте, что 1000 параллельных инкрементов дают 1000.
 
     ```haskell
-    prettyExpr :: Expr a -> String
+    type Counter = MVar Int
+    newCounter :: IO Counter
+    increment  :: Counter -> IO ()
+    getCount   :: Counter -> IO Int
     ```
 
-    ```text
-    > prettyExpr (Add (ILit 1) (ILit 2))
-    "(1 + 2)"
+2. Реализуйте `withTimeout :: Int -> IO a -> IO (Maybe a)` через `race`.
 
-    > prettyExpr (If (Gt (ILit 3) (ILit 2)) (ILit 1) (ILit 0))
-    "(if (3 > 2) then 1 else 0)"
-    ```
+### Проект ★★☆
 
-3. **(Среднее)** Напишите экземпляры `Container` для `[a]`, `Set a` и `Map k v`. Затем реализуйте обобщённую функцию:
+3. Реализуйте параллельное скачивание с прогрессом:
 
     ```haskell
-    containerFromList :: Container c => [Elem c] -> c
+    data DownloadProgress = DownloadProgress { dpTotal :: Int, dpCompleted :: Int }
+    downloadAll :: [String] -> (DownloadProgress -> IO ()) -> IO [String]
     ```
 
-    ```text
-    > containerFromList [3, 1, 2] :: Set Int
-    fromList [1,2,3]
-    ```
-
-    *Подсказка:* используйте `foldl'`, `flip insert` и `empty`.
-
-4. **(Продвинутое)** Реализуйте операции на `Vec n a`:
+4. Реализуйте банковские переводы на STM. Проверьте инвариант: суммарный баланс не меняется.
 
     ```haskell
-    vhead   :: Vec ('Succ n) a -> a
-    vtail   :: Vec ('Succ n) a -> Vec n a
-    vzip    :: Vec n a -> Vec n b -> Vec n (a, b)
-    vappend :: Vec n a -> Vec m a -> Vec (Add n m) a
+    type Account = TVar Int
+    deposit  :: Account -> Int -> STM ()
+    withdraw :: Account -> Int -> STM ()  -- retry при недостатке
+    transfer :: Account -> Account -> Int -> STM ()
     ```
 
-    `vhead` и `vtail` тотальны — пустой вектор невозможен. `vzip` работает только с векторами одинаковой длины. `vappend` использует семейство типов `Add` для вычисления длины результата.
+### Практика ★☆☆
+
+5. Напишите `parallelMap :: (a -> b) -> [a] -> IO [b]` через `mapConcurrently` и `evaluate`.
+
+6. Реализуйте конкурентный лог на `TChan`:
+
+    ```haskell
+    type Logger = TChan String
+    newLogger  :: IO Logger
+    logMessage :: Logger -> String -> IO ()
+    flushLog   :: Logger -> IO [String]
+    ```
+
+### Практика ★★☆
+
+7. Реализуйте `raceAll :: [IO a] -> IO a` — возвращает результат первого завершившегося действия.
+
+8. Реализуйте worker pool: `N` воркеров обрабатывают задачи из `TChan`:
+
+    ```haskell
+    workerPool :: Int -> TChan (IO ()) -> IO ()
+    ```
 
 ## Заключение
 
-В этой главе мы:
+Конкурентность в GHC построена на лёгких потоках — дешёвых и управляемых рантаймом. Низкоуровневые `forkIO` и `MVar` подходят для простых случаев, но для продакшн-кода лучше использовать `async` с его `concurrently`, `race` и `mapConcurrently`. Когда нужна атомарность нескольких переменных, STM предоставляет композируемые транзакции: `TVar`, `retry`, `orElse`. Эти инструменты позволили нам построить параллельный импорт задач с прогрессом и тайм-аутами.
 
-- Увидели ограничения обычных АТД и мотивацию для GADTs.
-- Освоили фантомные типы и перешли к GADTs с уточнением типов при сопоставлении.
-- Написали типобезопасный вычислитель выражений без рантайм-ошибок.
-- Познакомились с `DataKinds` — промоцией данных в типы.
-- Разобрали семейства типов: закрытые, открытые и ассоциированные.
-- Реализовали `Vec n a` — вектор с длиной в типе, где тотальность `vhead` гарантирована компилятором.
+В [следующей главе](chapter17.md) мы создадим REST API с базой данных для трекера задач.
+
+```admonish tip title="Для углубления"
+- **Haskell MOOC** — [haskell.mooc.fi](https://haskell.mooc.fi/), лекция 16: «Concurrency».
+- **async** — [hackage.haskell.org/package/async](https://hackage.haskell.org/package/async).
+- **Parallel and Concurrent Programming in Haskell** (Simon Marlow) — [simonmar.github.io/pages/pcph.html](https://simonmar.github.io/pages/pcph.html).
+- **Beautiful Concurrency** (Simon Peyton Jones) — [microsoft.com/en-us/research/wp-content/uploads/2016/02/beautiful.pdf](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/beautiful.pdf).
+- **stm** — [hackage.haskell.org/package/stm](https://hackage.haskell.org/package/stm).
+```

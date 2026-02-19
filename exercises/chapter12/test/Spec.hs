@@ -1,131 +1,191 @@
 module Main where
 
-import Test.Hspec
-import Control.Monad.State.Strict (gets)
-import Data.Aeson (encode)
-import qualified Data.ByteString.Lazy as BL
 import Data.Map.Strict qualified as Map
-import System.Directory (getTemporaryDirectory, removeFile)
+import Test.Hspec
 
-import Game
 import MySolutions
+import TaskTracker
 
 main :: IO ()
 main = hspec $ do
-  describe "runGame (предоставлено)" $ do
-    it "запускает чистое вычисление" $ do
-      let Right (room, _) = runGame exampleConfig initialState (gets playerRoom)
-      room `shouldBe` "entrance"
+  -- ===========================================================
+  -- Упражнение 1: completeTask
+  -- ===========================================================
+  describe "Упражнение 1: completeTask" $ do
+    it "завершает задачу со статусом Todo" $
+      case completeTask (TaskId 1) exampleStore of
+        Right store ->
+          lookupTask (TaskId 1) store
+            `shouldBe` Just (Task "Купить молоко" Medium Done)
+        Left err -> expectationFailure $ "Ожидали Right, получили: " ++ show err
 
-  describe "look (упражнение 1)" $ do
-    it "содержит описание комнаты" $ do
-      let Right (desc, _) = runGame exampleConfig initialState look
-      desc `shouldContain` "Вход в подземелье"
+    it "завершает задачу со статусом InProgress" $
+      case completeTask (TaskId 2) exampleStore of
+        Right store ->
+          lookupTask (TaskId 2) store
+            `shouldBe` Just (Task "Написать отчёт" High Done)
+        Left err -> expectationFailure $ "Ожидали Right, получили: " ++ show err
 
-    it "содержит предметы комнаты" $ do
-      let Right (desc, _) = runGame exampleConfig initialState look
-      desc `shouldContain` "Лампа"
+    it "ошибка AlreadyDone для уже завершённой задачи" $
+      completeTask (TaskId 3) exampleStore
+        `shouldBe` Left (AlreadyDone (TaskId 3))
 
-    it "содержит выходы" $ do
-      let Right (desc, _) = runGame exampleConfig initialState look
-      desc `shouldContain` "север"
+    it "ошибка TaskNotFound для несуществующей задачи" $
+      completeTask (TaskId 99) exampleStore
+        `shouldBe` Left (TaskNotFound (TaskId 99))
 
-    it "в пустой комнате показывает 'ничего'" $ do
-      let state = initialState { roomItems = Map.empty }
-      let Right (desc, _) = runGame exampleConfig state look
-      desc `shouldContain` "ничего"
+    it "ошибка TaskNotFound в пустом хранилище" $
+      completeTask (TaskId 1) emptyStore
+        `shouldBe` Left (TaskNotFound (TaskId 1))
 
-  describe "move (упражнение 2)" $ do
-    it "перемещает на север" $ do
-      let Right (_, st) = runGame exampleConfig initialState (move North)
-      playerRoom st `shouldBe` "hall"
+  -- ===========================================================
+  -- Упражнение 2: deleteTask
+  -- ===========================================================
+  describe "Упражнение 2: deleteTask" $ do
+    it "удаляет существующую задачу" $
+      case deleteTask (TaskId 1) exampleStore of
+        Right (TaskStore m) -> Map.size m `shouldBe` 2
+        Left err -> expectationFailure $ "Ожидали Right, получили: " ++ show err
 
-    it "возвращает сообщение о перемещении" $ do
-      let Right (msg, _) = runGame exampleConfig initialState (move North)
-      msg `shouldContain` "север"
+    it "задача исчезает из хранилища после удаления" $
+      case deleteTask (TaskId 1) exampleStore of
+        Right store -> lookupTask (TaskId 1) store `shouldBe` Nothing
+        Left err -> expectationFailure $ "Ожидали Right, получили: " ++ show err
 
-    it "ошибка при невозможном направлении" $ do
-      let result = runGame exampleConfig initialState (move East)
-      result `shouldBe` Left (NoExit East)
+    it "ошибка при удалении несуществующей задачи" $
+      deleteTask (TaskId 99) exampleStore
+        `shouldBe` Left (TaskNotFound (TaskId 99))
 
-    it "последовательные перемещения" $ do
-      let game = move North >> move East
-      let Right (_, st) = runGame exampleConfig initialState game
-      playerRoom st `shouldBe` "treasury"
+    it "ошибка при удалении из пустого хранилища" $
+      deleteTask (TaskId 1) emptyStore
+        `shouldBe` Left (TaskNotFound (TaskId 1))
 
-  describe "pickUp (упражнение 3)" $ do
-    it "добавляет предмет в инвентарь" $ do
-      let Right (_, st) = runGame exampleConfig initialState (pickUp Lamp)
-      Lamp `elem` inventory st `shouldBe` True
+  -- ===========================================================
+  -- Упражнение 3: processCommands
+  -- ===========================================================
+  describe "Упражнение 3: processCommands" $ do
+    let cfg = AppConfig Medium 10
 
-    it "убирает предмет из комнаты" $ do
-      let Right (_, st) = runGame exampleConfig initialState (pickUp Lamp)
-      let items = Map.findWithDefault [] "entrance" (roomItems st)
-      Lamp `elem` items `shouldBe` False
+    it "пустой список команд — хранилище без изменений" $
+      processCommands cfg [] emptyStore `shouldBe` Right emptyStore
 
-    it "возвращает сообщение" $ do
-      let Right (msg, _) = runGame exampleConfig initialState (pickUp Lamp)
-      msg `shouldContain` "Лампа"
+    it "AddCmd добавляет задачу с приоритетом по умолчанию" $
+      case processCommands cfg [AddCmd "Новая задача"] emptyStore of
+        Right store -> do
+          let (TaskStore m) = store
+          Map.size m `shouldBe` 1
+          -- Задача должна иметь приоритет Medium (по умолчанию)
+          case Map.elems m of
+            [task] -> taskPriority task `shouldBe` Medium
+            _ -> expectationFailure "Ожидали одну задачу"
+        Left err -> expectationFailure $ "Ожидали Right, получили: " ++ show err
 
-    it "ошибка при отсутствии предмета" $ do
-      let result = runGame exampleConfig initialState (pickUp Sword)
-      result `shouldBe` Left (ItemNotFound Sword)
+    it "CompleteCmd завершает существующую задачу" $
+      case processCommands cfg [CompleteCmd (TaskId 1)] exampleStore of
+        Right store ->
+          lookupTask (TaskId 1) store
+            `shouldBe` Just (Task "Купить молоко" Medium Done)
+        Left err -> expectationFailure $ "Ожидали Right, получили: " ++ show err
 
-    it "подбор после перемещения" $ do
-      let game = move North >> pickUp Sword
-      let Right (_, st) = runGame exampleConfig initialState game
-      Sword `elem` inventory st `shouldBe` True
+    it "CompleteCmd для несуществующей задачи — ошибка" $
+      processCommands cfg [CompleteCmd (TaskId 99)] emptyStore
+        `shouldBe` Left (TaskNotFound (TaskId 99))
 
-  describe "useItem (упражнение 4)" $ do
-    it "зелье восстанавливает здоровье" $ do
-      let state = initialState { inventory = [Potion], playerHealth = 50 }
-      let Right (_, st) = runGame exampleConfig state (useItem Potion)
-      playerHealth st `shouldBe` 75
+    it "несколько AddCmd создают несколько задач" $
+      case processCommands cfg [AddCmd "Первая", AddCmd "Вторая"] emptyStore of
+        Right (TaskStore m) -> Map.size m `shouldBe` 2
+        Left err -> expectationFailure $ "Ожидали Right, получили: " ++ show err
 
-    it "здоровье не превышает 100" $ do
-      let state = initialState { inventory = [Potion], playerHealth = 90 }
-      let Right (_, st) = runGame exampleConfig state (useItem Potion)
-      playerHealth st `shouldBe` 100
+    it "ошибка останавливает обработку" $
+      processCommands
+        cfg
+        [AddCmd "Задача", CompleteCmd (TaskId 99), AddCmd "Не добавится"]
+        emptyStore
+        `shouldBe` Left (TaskNotFound (TaskId 99))
 
-    it "предмет убирается из инвентаря" $ do
-      let state = initialState { inventory = [Lamp, Sword] }
-      let Right (_, st) = runGame exampleConfig state (useItem Lamp)
-      Lamp `elem` inventory st `shouldBe` False
-      Sword `elem` inventory st `shouldBe` True
+  -- ===========================================================
+  -- Упражнение 4: safeHead и firstPlusSecond
+  -- ===========================================================
+  describe "Упражнение 4: safeHead" $ do
+    it "первый элемент непустого списка" $
+      safeHead [1, 2, 3 :: Int] `shouldBe` Just 1
 
-    it "ошибка при отсутствии в инвентаре" $ do
-      let result = runGame exampleConfig initialState (useItem Sword)
-      result `shouldBe` Left (ItemNotFound Sword)
+    it "Nothing для пустого списка" $
+      safeHead ([] :: [Int]) `shouldBe` Nothing
 
-    it "полный сценарий: подобрать и использовать" $ do
-      let game = do
-            pickUp Lamp
-            useItem Lamp
-      let Right (msg, st) = runGame exampleConfig initialState game
-      msg `shouldContain` "Лампа"
-      Lamp `elem` inventory st `shouldBe` False
+    it "работает со строками" $
+      safeHead ["hello", "world"] `shouldBe` Just "hello"
 
-  describe "safeReadJSON (упражнение 5)" $ do
-    it "читает валидный JSON-файл" $ do
-      tmpDir <- getTemporaryDirectory
-      let path = tmpDir <> "/hbe-ch12-test.json"
-      BL.writeFile path (encode [1, 2, 3 :: Int])
-      result <- safeReadJSON path :: IO (Either String [Int])
-      result `shouldBe` Right [1, 2, 3]
-      removeFile path
+  describe "Упражнение 4: firstPlusSecond" $ do
+    it "сумма первых двух элементов" $
+      firstPlusSecond [10, 20, 30] `shouldBe` Just 30
 
-    it "возвращает Left для несуществующего файла" $ do
-      result <- safeReadJSON "/nonexistent/path/file.json" :: IO (Either String [Int])
-      case result of
-        Left _  -> return ()
-        Right _ -> expectationFailure "ожидался Left для несуществующего файла"
+    it "Nothing для одного элемента" $
+      firstPlusSecond [5] `shouldBe` Nothing
 
-    it "возвращает Left для невалидного JSON" $ do
-      tmpDir <- getTemporaryDirectory
-      let path = tmpDir <> "/hbe-ch12-invalid.json"
-      writeFile path "это не json"
-      result <- safeReadJSON path :: IO (Either String [Int])
-      case result of
-        Left _  -> return ()
-        Right _ -> expectationFailure "ожидался Left для невалидного JSON"
-      removeFile path
+    it "Nothing для пустого списка" $
+      firstPlusSecond [] `shouldBe` Nothing
+
+    it "работает с отрицательными числами" $
+      firstPlusSecond [-1, 1] `shouldBe` Just 0
+
+  -- ===========================================================
+  -- Упражнение 5: validateTask
+  -- ===========================================================
+  describe "Упражнение 5: validateTask" $ do
+    it "валидная задача проходит проверку" $
+      validateTask (Task "Тест" Medium Todo)
+        `shouldBe` Right (Task "Тест" Medium Todo)
+
+    it "пустое название → ошибка" $
+      validateTask (Task "" High InProgress)
+        `shouldBe` Left "Пустое название"
+
+    it "название длиннее 200 символов → ошибка" $
+      validateTask (Task (replicate 201 'x') Low Todo)
+        `shouldBe` Left "Название слишком длинное"
+
+    it "название ровно 200 символов — допустимо" $
+      let title = replicate 200 'x'
+       in validateTask (Task title Low Todo)
+            `shouldBe` Right (Task title Low Todo)
+
+  -- ===========================================================
+  -- Упражнение 6: allTaskCombinations
+  -- ===========================================================
+  describe "Упражнение 6: allTaskCombinations" $ do
+    it "содержит 9 элементов (3×3)" $
+      length allTaskCombinations `shouldBe` 9
+
+    it "первый элемент — (Low, Todo)" $
+      head allTaskCombinations `shouldBe` (Low, Todo)
+
+    it "последний элемент — (High, Done)" $
+      last allTaskCombinations `shouldBe` (High, Done)
+
+    it "содержит (Medium, InProgress)" $
+      (Medium, InProgress) `elem` allTaskCombinations `shouldBe` True
+
+  -- ===========================================================
+  -- Упражнение 7: safeLookupChain
+  -- ===========================================================
+  describe "Упражнение 7: safeLookupChain" $ do
+    let m = Map.fromList [("a", "b"), ("b", "c"), ("c", "d")]
+
+    it "один ключ — простой lookup" $
+      safeLookupChain ["a"] m `shouldBe` Just "b"
+
+    it "два ключа — оба ищутся, возвращается последний результат" $
+      safeLookupChain ["a", "b"] m `shouldBe` Just "c"
+
+    it "три ключа" $
+      safeLookupChain ["a", "b", "c"] m `shouldBe` Just "d"
+
+    it "несуществующий ключ в цепочке → Nothing" $
+      safeLookupChain ["a", "x"] m `shouldBe` Nothing
+
+    it "пустой список ключей → Nothing" $
+      safeLookupChain [] m `shouldBe` (Nothing :: Maybe String)
+
+    it "первый ключ не найден → Nothing" $
+      safeLookupChain ["z"] m `shouldBe` Nothing

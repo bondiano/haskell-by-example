@@ -1,508 +1,504 @@
-# Интерфейс внешних функций (FFI)
+# Functor и Applicative
 
-## Цели главы
+Добро пожаловать в Часть III! В первых десяти главах мы познакомились с типами, ADT, классами типов, IO, обработкой ошибок, ленивостью и тестированием. Попутно мы сталкивались с одним и тем же паттерном: **применение функции к значению внутри контекста** — `Maybe`, `Either`, списка, `IO`. Пора дать этому паттерну имя.
 
-В этой главе мы познакомимся с двумя способами взаимодействия Haskell с внешним миром: вызов C-функций через FFI (Foreign Function Interface) и работа с JSON через библиотеку `aeson`.
+Здесь мы выделим общий паттерн преобразования значений внутри контейнеров, познакомимся с классами `Functor` и `Applicative`, построим тип `Validation` для накопления *всех* ошибок валидации и применим всё это для валидации формы создания задач в трекере. К концу главы станет ясно, как `Functor` и `Applicative` устраняют вложенный `case`, с которым мы мучились в [главе 8](chapter08.md).
 
-FFI позволяет вызывать функции из C-библиотек напрямую из Haskell. `aeson` — стандартная библиотека для кодирования и декодирования JSON, основной формат обмена данными в современных приложениях.
+## Проблема: повторяющийся паттерн
 
-## FFI — вызов C из Haskell
-
-### Зачем FFI?
-
-Haskell — высокоуровневый язык, но иногда нужен доступ к:
-
-- системным вызовам ОС,
-- существующим C-библиотекам (OpenSSL, SQLite, zlib),
-- критически производительному коду на C.
-
-FFI позволяет импортировать C-функции в Haskell и вызывать их как обычные функции.
-
-### `foreign import ccall`
-
-Базовый синтаксис:
+Вспомним код из предыдущих глав:
 
 ```haskell
-foreign import ccall "заголовок функция" имя_haskell :: тип
+-- Применяем функцию к каждому элементу списка
+map (+1) [1, 2, 3]         -- [2, 3, 4]
+
+-- Преобразуем значение внутри Maybe
+case maybePriority of
+  Nothing -> Nothing
+  Just p  -> Just (show p)
+
+-- Преобразуем успешный результат Either
+case parseResult of
+  Left err -> Left err
+  Right x  -> Right (process x)
 ```
 
-Пример — импорт `abs` из стандартной библиотеки C:
+Во всех случаях мы делаем одно и то же: **применяем функцию к значению внутри контейнера, не меняя сам контейнер**. Если `Maybe` — это `Nothing`, результат остаётся `Nothing`. Если `Either` — это `Left err`, ошибка сохраняется.
+
+В [главе 8](chapter08.md) мы видели боль вложенных `case`:
 
 ```haskell
-import Foreign.C.Types (CInt(..))
-
-foreign import ccall "stdlib.h abs" c_abs :: CInt -> CInt
+createTask :: String -> String -> String -> Either String Task
+createTask rawTitle rawDesc rawPrio =
+  case validateTitle rawTitle of
+    Left err -> Left err
+    Right title ->
+      case validateDescription rawDesc of
+        Left err -> Left err
+        Right desc ->
+          case parsePriority rawPrio of
+            Left err -> Left err
+            Right prio -> Right (Task title desc prio Todo)
 ```
 
-`c_abs` теперь вызывает C-функцию `abs`. `CInt` — Haskell-обёртка над C-типом `int`.
+Три уровня вложенности — и это всего три поля! Должен быть способ лучше.
 
-### Обёртка для удобства
+```admonish tip title="Знакомый аналог"
+Паттерн «лестницы» знаком из JavaScript до `async/await` — callback hell. `Functor` и `Applicative` — первые шаги к устранению подобных вложенностей в Haskell.
+```
 
-Прямой вызов FFI-функции оперирует C-типами. Обычно пишут Haskell-обёртку:
+## Functor
+
+### Класс типов Functor
+
+`Functor` — класс типов для контейнеров, внутри которых можно преобразовать значение:
 
 ```haskell
-cAbs :: Int -> Int
-cAbs = fromIntegral . c_abs . fromIntegral
+class Functor f where
+  fmap :: (a -> b) -> f a -> f b
 ```
 
-`fromIntegral` конвертирует между `Int` и `CInt`.
+Здесь `f` — **конструктор типа** (type constructor): `Maybe`, `Either e`, `[]`, `IO`. Каждый из них принимает один параметр и даёт конкретный тип (`Maybe Int`, `[String]` и т.д.).
 
-### Типы маршаллинга
+`fmap` берёт функцию `a -> b` и «поднимает» её внутрь контейнера: преобразует `f a` в `f b`, не меняя структуру.
 
-Модуль `Foreign.C.Types` предоставляет Haskell-аналоги C-типов:
-
-| C-тип | Haskell-тип | Модуль |
-|-------|-------------|--------|
-| `int` | `CInt` | `Foreign.C.Types` |
-| `double` | `CDouble` | `Foreign.C.Types` |
-| `char*` | `CString` | `Foreign.C.String` |
-| `size_t` | `CSize` | `Foreign.C.Types` |
-| `void*` | `Ptr a` | `Foreign.Ptr` |
-
-### Работа со строками: `CString`
-
-C-строки (`char*`) — нуль-терминированные массивы байт. В Haskell для работы с ними используются:
+### Инстансы для знакомых типов
 
 ```haskell
-import Foreign.C.String
+instance Functor Maybe where
+  fmap _ Nothing  = Nothing
+  fmap f (Just x) = Just (f x)
 
-withCString  :: String -> (CString -> IO a) -> IO a  -- Haskell → C
-peekCString  :: CString -> IO String                  -- C → Haskell
+instance Functor (Either e) where
+  fmap _ (Left e)  = Left e
+  fmap f (Right x) = Right (f x)
+
+instance Functor [] where
+  fmap = map
 ```
 
-Пример — обёртка над `strlen`:
+Обратите внимание: `Either e` — это `Functor`, а не `Either`. Конструктор `Either` принимает два параметра, но `Functor` ожидает конструктор с одним. Мы «фиксируем» тип ошибки — это частичное применение на уровне типов.
 
-```haskell
-foreign import ccall "string.h strlen" c_strlen :: CString -> CSize
+### Оператор <$>
 
-cStrlen :: String -> IO Int
-cStrlen s = withCString s $ \cs ->
-  return (fromIntegral (c_strlen cs))
-```
-
-`withCString` временно преобразует `String` в `CString`, передаёт его в лямбду и гарантирует освобождение памяти.
-
-### Безопасные и небезопасные вызовы
-
-```haskell
-foreign import ccall safe   "compute" c_compute_safe   :: CInt -> IO CInt
-foreign import ccall unsafe "compute" c_compute_unsafe :: CInt -> IO CInt
-```
-
-- **safe** (по умолчанию) — C-функция может вызывать Haskell-код обратно или выполняться долго. Рантайм корректно обрабатывает многопоточность.
-- **unsafe** — быстрее (нет переключения контекста), но C-функция не должна вызывать Haskell-код и должна завершиться быстро.
-
-Правило: используйте `unsafe` только для быстрых, чистых C-функций без обратных вызовов.
-
-## Text и ByteString
-
-Прежде чем перейти к JSON, разберёмся с типами строк в Haskell. В следующей секции мы увидим, что `aeson` оперирует типами `Text` и `ByteString`, а не `String`. Почему?
-
-### Проблема `String`
-
-`String` в Haskell — это просто синоним для списка символов:
-
-```haskell
-type String = [Char]
-```
-
-Связный список символов — удобная учебная структура, но крайне неэффективная:
-
-- **O(n)** доступ по индексу и вычисление длины.
-- Каждый символ хранится в отдельном узле списка с указателем — огромный расход памяти.
-- Непригоден для обработки больших текстов, файлов, сетевого ввода-вывода.
-
-Для реального кода используются `Text` и `ByteString`.
-
-### `Data.Text`
-
-`Text` — компактное представление текста в кодировке UTF-8:
-
-```haskell
-import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
-```
-
-Основные функции:
+`<$>` — инфиксный синоним `fmap`. Визуально напоминает `$`, но работает «сквозь» контейнер:
 
 ```text
-> :t T.pack
-T.pack :: String -> Text
+> fmap (+1) (Just 5)
+Just 6
 
-> :t T.unpack
-T.unpack :: Text -> String
+> (+1) <$> Just 5
+Just 6
 
-> T.toUpper (T.pack "hello")
-"HELLO"
+> show <$> Just 42
+Just "42"
 
-> T.words (T.pack "один два три")
-["один","два","три"]
+> (*2) <$> [1, 2, 3]
+[2, 4, 6]
 
-> T.intercalate (T.pack ", ") [T.pack "a", T.pack "b", T.pack "c"]
-"a, b, c"
+> length <$> (Right "hello" :: Either String Int)
+Right 5
 ```
 
-Существуют **строгая** (`Data.Text`) и **ленивая** (`Data.Text.Lazy`) версии. Строгая хранит весь текст в памяти одним куском; ленивая — цепочкой кусков (chunks), удобна для потоковой обработки больших файлов.
+```admonish tip title="Знакомый аналог"
+`fmap` / `<$>` — обобщение `.map()` из JavaScript, Python, Rust. Разница в том, что `fmap` работает не только для списков, а для *любого* `Functor`: `Maybe`, `Either`, `IO`, деревьев, парсеров и т.д.
+```
 
-Для ввода-вывода используйте `Data.Text.IO` вместо стандартных функций:
+### Законы Functor
+
+Каждый корректный инстанс `Functor` должен удовлетворять двум законам:
 
 ```haskell
-TIO.readFile  :: FilePath -> IO Text
-TIO.writeFile :: FilePath -> Text -> IO ()
-TIO.putStrLn  :: Text -> IO ()
+-- 1. Тождество: преобразование id не меняет значение
+fmap id x == id x
+
+-- 2. Композиция: два fmap можно заменить одним
+fmap (f . g) x == (fmap f . fmap g) x
 ```
 
-### `Data.ByteString`
+Законы гарантируют, что `fmap` **только** преобразует содержимое и не меняет структуру контейнера: не добавляет элементы в список, не превращает `Just` в `Nothing`, не меняет ветку `Either`.
 
-`ByteString` — массив **байтов**, не символов. Это важное различие:
+```admonish note title="Зачем нужны законы?"
+Законы позволяют рассуждать о коде: `fmap f . fmap g` можно безопасно заменить на `fmap (f . g)` — один проход вместо двух. Компилятор иногда делает такие оптимизации автоматически (через rewrite rules).
+```
+
+### Написание собственного инстанса
+
+Допустим, у нас есть тип «значение с меткой»:
 
 ```haskell
-import qualified Data.ByteString as BS         -- строгая версия
-import qualified Data.ByteString.Lazy as BL    -- ленивая версия
+data Labelled a = Labelled String a
+  deriving (Show, Eq)
+
+instance Functor Labelled where
+  fmap f (Labelled label x) = Labelled label (f x)
 ```
-
-Когда использовать `ByteString`:
-
-- бинарные данные (изображения, архивы),
-- сетевой ввод-вывод,
-- чтение/запись файлов как сырых байтов,
-- JSON, HTTP-ответы — форматы, работающие на уровне байтов.
-
-### Кодирование текста
-
-Для преобразования между `Text` и `ByteString` нужно указать кодировку:
-
-```haskell
-import Data.Text.Encoding (encodeUtf8, decodeUtf8)
-
-encodeUtf8 :: Text -> ByteString        -- текст → байты (UTF-8)
-decodeUtf8 :: ByteString -> Text         -- байты → текст (UTF-8, может упасть)
-```
-
-`decodeUtf8` бросает исключение на невалидном UTF-8. Безопасная альтернатива:
-
-```haskell
-decodeUtf8' :: ByteString -> Either UnicodeException Text
-```
-
-### `OverloadedStrings`
-
-Расширение `OverloadedStrings` (включено в нашем проекте) позволяет строковым литералам иметь любой тип, реализующий класс `IsString`:
-
-```haskell
-{-# LANGUAGE OverloadedStrings #-}
-
-greeting :: Text
-greeting = "Привет"    -- литерал автоматически становится Text
-
-path :: ByteString
-path = "/api/users"    -- литерал автоматически становится ByteString
-```
-
-Без этого расширения пришлось бы писать `T.pack "Привет"` каждый раз.
-
-### Когда что использовать
-
-| Тип | Когда использовать |
-|-----|-------------------|
-| `String` | REPL, прототипы, учебные примеры |
-| `Text` | Любой текст в приложении |
-| `ByteString` | Бинарные данные, JSON (`aeson`), HTTP, файловый I/O |
-
-### Конвертации
 
 ```text
-String  ←→  Text:         T.pack / T.unpack
-Text    →   ByteString:   encodeUtf8
-ByteString → Text:        decodeUtf8 (или decodeUtf8' для безопасности)
-String  ←→  ByteString:   через Text (pack → encodeUtf8, decodeUtf8 → unpack)
+> fmap (*2) (Labelled "результат" 21)
+Labelled "результат" 42
 ```
 
-Теперь, когда мы знаем разницу между этими типами, `aeson` будет понятнее — он использует `Text` для ключей JSON и `ByteString` для сериализованных данных.
-
-## JSON и `aeson`
-
-### Почему `aeson`?
-
-`aeson` — стандартная библиотека Haskell для работы с JSON. Она обеспечивает:
-
-- Автоматическую сериализацию через `Generic`.
-- Гибкие ручные экземпляры для нестандартных форматов.
-- Высокую производительность.
-
-### Установка
-
-`aeson` доступен в Stackage. В `package.yaml`:
-
-```yaml
-dependencies:
-  - aeson
-  - bytestring
-```
-
-### Тип `Value`
-
-`aeson` представляет JSON как тип `Value`:
+````admonish tip title="Автоматический вывод"
+GHC может вывести `Functor` автоматически с расширением `DeriveFunctor` (включено в нашем проекте):
 
 ```haskell
-data Value
-  = Object Object    -- {"key": value}
-  | Array  Array     -- [value, ...]
-  | String Text      -- "text"
-  | Number Scientific -- 42, 3.14
-  | Bool   Bool      -- true, false
-  | Null             -- null
+data Labelled a = Labelled String a
+  deriving stock (Show, Eq, Functor)
+```
+````
+
+## Applicative
+
+### Мотивация: функции нескольких аргументов
+
+`fmap` работает с функциями одного аргумента. Но что, если функция принимает два аргумента?
+
+```text
+> :type fmap (+) (Just 3)
+fmap (+) (Just 3) :: Num a => Maybe (a -> a)
 ```
 
-### `ToJSON` и `FromJSON`
+Мы получили `Maybe (a -> a)` — функцию *внутри* `Maybe`! Как применить её к другому `Maybe`? У `fmap` нет такой возможности. Нужен оператор, применяющий функцию внутри контейнера к значению внутри контейнера.
 
-Два ключевых класса типов:
+### Класс типов Applicative
 
 ```haskell
-class ToJSON a where
-  toJSON :: a -> Value          -- Haskell → JSON
-
-class FromJSON a where
-  parseJSON :: Value -> Parser a  -- JSON → Haskell
+class Functor f => Applicative f where
+  pure  :: a -> f a
+  (<*>) :: f (a -> b) -> f a -> f b
 ```
 
-### `encode` и `decode`
+- **`pure`** — помещает значение в «минимальный» контекст: `pure 5 :: Maybe Int` даёт `Just 5`.
+- **`<*>`** (произносится «ap») — применяет функцию в контейнере к значению в контейнере.
+
+Ограничение `Functor f =>` означает, что каждый `Applicative` — автоматически `Functor`. Иерархия: `Functor` -> `Applicative` -> `Monad`.
+
+### Паттерн f <$> a <*> b <*> c
+
+Ключевая идиома `Applicative`:
 
 ```haskell
-encode :: ToJSON a => a -> ByteString
-decode :: FromJSON a => ByteString -> Maybe a
+-- Обычное применение:
+Task title desc prio Todo
+
+-- Применение к значениям в контейнерах:
+Task <$> validateTitle title
+     <*> validateDescription desc
+     <*> parsePriority prio
+     <*> pure Todo
 ```
 
+Разберём по шагам для `Maybe`:
+
+```text
+> (+) <$> Just 3 <*> Just 5
+-- Шаг 1: (+) <$> Just 3  =  Just (+3)    -- fmap
+-- Шаг 2: Just (+3) <*> Just 5  =  Just 8 -- <*>
+Just 8
+
+> (+) <$> Nothing <*> Just 5
+Nothing
+
+> (,,) <$> Just "a" <*> Just "b" <*> Just "c"
+Just ("a","b","c")
+```
+
+## Applicative для Maybe и Either
+
+### Maybe: остановка на первом Nothing
+
 ```haskell
-import Data.Aeson (encode, decode)
+instance Applicative Maybe where
+  pure = Just
+  Nothing <*> _ = Nothing
+  Just f  <*> x = fmap f x
+```
 
-> encode [1, 2, 3 :: Int]
-"[1,2,3]"
+При первом `Nothing` вычисление «короткозамыкается» — именно то поведение, которое мы реализовывали вручную через вложенный `case`!
 
-> decode "[1,2,3]" :: Maybe [Int]
-Just [1,2,3]
+### Either e: остановка на первой ошибке
 
-> decode "invalid" :: Maybe [Int]
+```haskell
+instance Applicative (Either e) where
+  pure = Right
+  Left e  <*> _ = Left e
+  Right f <*> x = fmap f x
+```
+
+```text
+> (+) <$> Right 3 <*> Right 5
+Right 8
+
+> (+) <$> Left "ошибка 1" <*> Left "ошибка 2"
+Left "ошибка 1"
+```
+
+`Either` возвращает **только первую ошибку**. Вторая теряется — для валидации форм это неудобно.
+
+### Перепишем createTask
+
+```haskell
+-- Было (вложенные case — 12 строк):
+createTask rawTitle rawDesc rawPrio =
+  case validateTitle rawTitle of
+    Left err -> Left err
+    Right title -> case validateDescription rawDesc of ...
+
+-- Стало (Applicative — 4 строки):
+createTask :: String -> String -> String -> Either String Task
+createTask rawTitle rawDesc rawPrio =
+  Task <$> validateTitle rawTitle
+       <*> validateDescription rawDesc
+       <*> parsePriority rawPrio
+       <*> pure Todo
+```
+
+Никаких вложенных `case`. При первой ошибке вычисление останавливается и возвращает `Left`.
+
+### Applicative для списков
+
+У списков `Applicative` комбинирует *все* пары — декартово произведение:
+
+```text
+> (*) <$> [1, 2, 3] <*> [10, 100]
+[10, 100, 20, 200, 30, 300]
+
+> (,) <$> ["a", "b"] <*> [1, 2]
+[("a",1),("a",2),("b",1),("b",2)]
+```
+
+## Validation — накопление ошибок
+
+### Проблема Either
+
+`Either` останавливается на первой ошибке. Но при валидации формы мы хотим показать *все* проблемы сразу. Нужен другой тип.
+
+### Тип Validation
+
+```haskell
+data Validation e a
+  = Failure e
+  | Success a
+  deriving (Show, Eq)
+```
+
+Внешне похож на `Either`, но `Applicative`-инстанс **накапливает** ошибки:
+
+```haskell
+instance Functor (Validation e) where
+  fmap _ (Failure e) = Failure e
+  fmap f (Success x) = Success (f x)
+
+instance Semigroup e => Applicative (Validation e) where
+  pure = Success
+  Failure e1 <*> Failure e2 = Failure (e1 <> e2)  -- накапливаем!
+  Failure e  <*> _          = Failure e
+  _          <*> Failure e  = Failure e
+  Success f  <*> Success x  = Success (f x)
+```
+
+Ограничение `Semigroup e` требует, чтобы ошибки можно было объединять через `(<>)`. Для списков `(<>)` — конкатенация, поэтому `Validation [Text]` собирает ошибки в список.
+
+```text
+-- Either: только первая ошибка
+> Left ["ошибка 1"] <*> Left ["ошибка 2"]
+Left ["ошибка 1"]
+
+-- Validation: обе ошибки
+> Failure ["ошибка 1"] <*> Failure ["ошибка 2"]
+Failure ["ошибка 1","ошибка 2"]
+```
+
+```admonish tip title="Знакомый аналог"
+`Validation` — аналог валидации форм в Zod/Yup (JavaScript), где `safeParse` возвращает массив *всех* ошибок, а не только первой. Или `Promise.allSettled()`, собирающий результаты всех промисов.
+```
+
+```admonish warning title="Validation и Monad"
+`Validation` **не может** иметь корректный инстанс `Monad`. В монаде каждый шаг зависит от предыдущего (`>>=`), а если первое вычисление провалилось — нет значения для передачи. Поэтому `Validation` живёт на уровне `Applicative`: все вычисления независимы.
+```
+
+## Traversable: обход с эффектами
+
+Класс `Traversable` тесно связан с `Applicative`:
+
+```haskell
+class (Functor t, Foldable t) => Traversable t where
+  traverse :: Applicative f => (a -> f b) -> t a -> f (t b)
+```
+
+`traverse` — «`map` с эффектами». Применяет функцию к каждому элементу и собирает результаты:
+
+```text
+> traverse readMaybe ["1", "2", "3"] :: Maybe [Int]
+Just [1, 2, 3]
+
+> traverse readMaybe ["1", "abc", "3"] :: Maybe [Int]
 Nothing
 ```
 
-`encode` возвращает `ByteString` (ленивый). `decode` возвращает `Maybe` — `Nothing` при ошибке парсинга.
-
-Для получения сообщения об ошибке используйте `eitherDecode`:
+Частный случай — `sequence`, «выворачивающий» структуру:
 
 ```haskell
-eitherDecode :: FromJSON a => ByteString -> Either String a
-```
-
-### Generic-деривация
-
-Самый простой способ — автоматическая деривация через `Generic`:
-
-```haskell
-import Data.Aeson (ToJSON, FromJSON)
-import GHC.Generics (Generic)
-
-data Contact = Contact
-  { name  :: String
-  , phone :: String
-  , email :: String
-  } deriving stock (Show, Eq, Generic)
-
-instance ToJSON Contact
-instance FromJSON Contact
-```
-
-Пустые экземпляры используют реализации по умолчанию, основанные на `Generic`. Имена полей записи становятся ключами JSON:
-
-```text
-> encode (Contact "Иван" "+7-900-123" "ivan@example.com")
-{"name":"Иван","phone":"+7-900-123","email":"ivan@example.com"}
-```
-
-### Ручные экземпляры
-
-Когда ключи JSON не совпадают с именами полей, пишутся ручные экземпляры:
-
-```haskell
-import Data.Aeson
-
-data Movie = Movie
-  { movieTitle  :: String
-  , movieYear   :: Int
-  , movieRating :: Double
-  } deriving stock (Show, Eq)
-
-instance ToJSON Movie where
-  toJSON Movie{..} = object
-    [ "title"  .= movieTitle
-    , "year"   .= movieYear
-    , "rating" .= movieRating
-    ]
-
-instance FromJSON Movie where
-  parseJSON = withObject "Movie" $ \o -> Movie
-    <$> o .: "title"
-    <*> o .: "year"
-    <*> o .: "rating"
-```
-
-Разберём `FromJSON`:
-
-- `withObject "Movie"` — проверить, что `Value` — это объект; при ошибке сообщить «ожидался Movie».
-- `o .: "title"` — извлечь ключ `"title"` из объекта.
-- `<$>` и `<*>` — аппликативный стиль (глава 7).
-
-### `object` и `.=`
-
-`object` создаёт JSON-объект из списка пар:
-
-```haskell
-object :: [Pair] -> Value
-(.=)   :: ToJSON v => Key -> v -> Pair
-```
-
-```haskell
-> encode (object ["x" .= (1 :: Int), "y" .= (2 :: Int)])
-{"x":1,"y":2}
-```
-
-### Опциональные поля
-
-`(.:?)` извлекает необязательный ключ (возвращает `Maybe`), а `(.!=)` задаёт значение по умолчанию:
-
-```haskell
-data Config = Config
-  { configHost    :: String
-  , configPort    :: Int
-  , configDebug   :: Bool
-  , configLogFile :: Maybe String
-  } deriving stock (Show, Eq)
-
-instance FromJSON Config where
-  parseJSON = withObject "Config" $ \o -> Config
-    <$> o .:  "host"
-    <*> o .:  "port"
-    <*> o .:? "debug"    .!= False     -- False, если ключ отсутствует
-    <*> o .:? "log_file"               -- Nothing, если ключ отсутствует
+sequence :: (Traversable t, Applicative f) => t (f a) -> f (t a)
 ```
 
 ```text
-> decode "{\"host\":\"localhost\",\"port\":8080}" :: Maybe Config
-Just (Config "localhost" 8080 False Nothing)
+> sequence [Just 1, Just 2, Just 3]
+Just [1, 2, 3]
+
+> sequence [Just 1, Nothing, Just 3]
+Nothing
 ```
 
-### Работа с JSON-файлами
+## Проект: валидация формы создания задач
+
+Соберём всё вместе — валидация ввода для трекера с `Validation`.
+
+### Валидаторы полей
 
 ```haskell
-import qualified Data.ByteString.Lazy as BL
+import Data.Text (Text)
+import qualified Data.Text as T
 
-saveJSON :: ToJSON a => FilePath -> a -> IO ()
-saveJSON path value = BL.writeFile path (encode value)
+validateTitle :: Text -> Validation [Text] Text
+validateTitle title
+  | T.null (T.strip title)  = Failure ["Заголовок не может быть пустым"]
+  | T.length title > 100    = Failure ["Заголовок слишком длинный"]
+  | otherwise                = Success (T.strip title)
 
-loadJSON :: FromJSON a => FilePath -> IO (Either String a)
-loadJSON path = eitherDecode <$> BL.readFile path
+validatePriority :: Text -> Validation [Text] Priority
+validatePriority txt = case T.toLower (T.strip txt) of
+  "low"    -> Success Low
+  "medium" -> Success Medium
+  "high"   -> Success High
+  _        -> Failure ["Приоритет должен быть low, medium или high"]
+
+validateDescription :: Text -> Validation [Text] Text
+validateDescription desc
+  | T.length desc > 500 = Failure ["Описание слишком длинное"]
+  | otherwise            = Success desc
 ```
 
-Пример:
+### Собираем форму
 
 ```haskell
-main :: IO ()
-main = do
-  let contacts = [Contact "Иван" "+7-900-123" "ivan@example.com"]
-  saveJSON "contacts.json" contacts
-  result <- loadJSON "contacts.json"
-  case result of
-    Left err -> putStrLn ("Ошибка: " <> err)
-    Right cs -> mapM_ (putStrLn . name) (cs :: [Contact])
+validateTaskInput :: Text -> Text -> Text -> Validation [Text] Task
+validateTaskInput rawTitle rawDesc rawPrio =
+  Task <$> validateTitle rawTitle
+       <*> validateDescription rawDesc
+       <*> validatePriority rawPrio
+       <*> pure Todo
+```
+
+```text
+> validateTaskInput "Изучить Functor" "" "high"
+Success (Task "Изучить Functor" "" High Todo)
+
+> validateTaskInput "" "" "oops"
+Failure ["Заголовок не может быть пустым",
+         "Приоритет должен быть low, medium или high"]
+```
+
+Обе ошибки возвращены одновременно! С `Either` мы бы увидели только первую. Для перехода обратно к `Either` используем конвертер:
+
+```haskell
+validationToEither :: Validation e a -> Either e a
+validationToEither (Failure e) = Left e
+validationToEither (Success x) = Right x
+```
+
+## Шпаргалка
+
+| Абстракция | Метод | Сигнатура | Что делает |
+|---|---|---|---|
+| `Functor` | `fmap` / `<$>` | `(a -> b) -> f a -> f b` | Преобразует значение внутри контейнера |
+| `Applicative` | `pure` | `a -> f a` | Помещает значение в контейнер |
+| `Applicative` | `<*>` | `f (a -> b) -> f a -> f b` | Применяет функцию в контейнере |
+| `Traversable` | `traverse` | `(a -> f b) -> t a -> f (t b)` | `map` с эффектами |
+
+**Иерархия:**
+
+```text
+Functor        fmap     — преобразование (1 аргумент)
+  ↓
+Applicative    <*>      — комбинирование независимых вычислений
+  ↓
+Monad          >>=      — цепочка зависимых вычислений (глава 12)
 ```
 
 ## Упражнения
 
-Решения пишите в `test/MySolutions.hs`. Проверяйте: `stack test`.
+Решения пишите в `test/MySolutions.hs`. Проверяйте: `stack test chapter11`.
 
-1. **(Лёгкое)** Реализуйте `encodeContacts` и `decodeContacts` — кодирование и декодирование списка контактов в JSON.
+### Проект ★☆☆
 
-    ```haskell
-    encodeContacts :: [Contact] -> ByteString
-    decodeContacts :: ByteString -> Maybe [Contact]
-    ```
-
-    ```text
-    > decodeContacts (encodeContacts [Contact "Тест" "123" "t@e.com"])
-    Just [Contact {name = "Тест", phone = "123", email = "t@e.com"}]
-    ```
-
-    *Подсказка:* используйте `encode` и `decode` из `Data.Aeson`. Тип `Contact` уже имеет экземпляры `ToJSON` / `FromJSON`.
-
-2. **(Среднее)** Определите тип `Movie` с полями `movieTitle`, `movieYear`, `movieRating` и напишите для него ручные экземпляры `ToJSON` / `FromJSON`. JSON-ключи должны быть `"title"`, `"year"`, `"rating"` (без префикса `movie`).
+1. Напишите функцию `validateTitle`, которая проверяет заголовок задачи: непустой и не длиннее 100 символов. Верните `Validation [Text] Text`.
 
     ```haskell
-    data Movie = Movie
-      { movieTitle  :: String
-      , movieYear   :: Int
-      , movieRating :: Double
-      }
-
-    encodeMovie :: Movie -> ByteString
-    decodeMovie :: ByteString -> Maybe Movie
+    validateTitle :: Text -> Validation [Text] Text
     ```
 
-    *Подсказка:* используйте `object` и `(.=)` для `ToJSON`, `withObject` и `(.:)` для `FromJSON`.
-
-3. **(Среднее)** Реализуйте универсальные функции сохранения и загрузки JSON-файлов.
+2. Напишите функцию `validatePriority`, которая парсит строку `"low"`, `"medium"`, `"high"` (регистронезависимо) в `Priority`.
 
     ```haskell
-    saveJSON :: ToJSON a => FilePath -> a -> IO ()
-    loadJSON :: FromJSON a => FilePath -> IO (Either String a)
+    validatePriority :: Text -> Validation [Text] Priority
     ```
 
-    *Подсказка:* используйте `BL.writeFile` / `BL.readFile` из `Data.ByteString.Lazy` и `encode` / `eitherDecode` из `Data.Aeson`.
+### Проект ★★☆
 
-4. **(Сложное)** Определите тип `Config` и напишите экземпляры `ToJSON` / `FromJSON` с опциональными полями.
+3. Реализуйте тип `Validation e a` с инстансами `Functor` и `Applicative`. Напишите `validateTaskInput`, возвращающую все ошибки одновременно.
 
     ```haskell
-    data Config = Config
-      { configHost    :: String
-      , configPort    :: Int
-      , configDebug   :: Bool        -- по умолчанию False
-      , configLogFile :: Maybe String -- Nothing, если отсутствует
-      }
+    data Validation e a = Failure e | Success a
 
-    encodeConfig :: Config -> ByteString
-    decodeConfig :: ByteString -> Maybe Config
+    validateTaskInput :: Text -> Text -> Text -> Validation [Text] Task
+    validateTaskInput rawTitle rawDesc rawPrio =
+      Task <$> validateTitle rawTitle <*> ...
     ```
 
-    JSON-ключи: `"host"`, `"port"`, `"debug"`, `"log_file"`.
+### Практика ★☆☆
 
-    ```text
-    > decodeConfig "{\"host\":\"localhost\",\"port\":8080}"
-    Just (Config "localhost" 8080 False Nothing)
-    ```
-
-    *Подсказка:* используйте `(.:?)` для опциональных ключей и `(.!=)` для значений по умолчанию.
-
-5. **(Лёгкое)** Реализуйте функцию `normalizeText`, которая принимает `Text`, приводит к нижнему регистру и убирает лишние пробелы (множественные пробелы заменяются одним, пробелы в начале и конце удаляются).
+4. Напишите инстанс `Functor` для типа `Labelled`:
 
     ```haskell
-    normalizeText :: Text -> Text
+    data Labelled a = Labelled String a
+
+    instance Functor Labelled where
+      fmap = ...
     ```
 
-    ```text
-    > normalizeText "  Hello   World  "
-    "hello world"
+5. Напишите инстанс `Functor` для `RoseTree`:
+
+    ```haskell
+    data RoseTree a = RoseNode a [RoseTree a]
+
+    instance Functor RoseTree where
+      fmap = ...
     ```
 
-    *Подсказка:* используйте `T.toLower`, `T.words` и `T.unwords` из `Data.Text`.
+    *Подсказка:* рекурсия и `map` для списка поддеревьев.
+
+### Практика ★★☆
+
+6. Напишите инстанс `Applicative` для `Labelled`, объединяя метки через `(<>)`:
+
+    ```haskell
+    instance Applicative Labelled where
+      pure x = Labelled "" x
+      Labelled l1 f <*> Labelled l2 x = Labelled (l1 <> l2) (f x)
+    ```
+
+    Проверьте: `(+) <$> Labelled "a" 3 <*> Labelled "b" 5` даёт `Labelled "ab" 8`.
 
 ## Заключение
 
-В этой главе мы:
+`Functor` и `Applicative` — не абстрактная математика, а практические инструменты, убирающие шаблонный код. `fmap` и `<$>` обобщают `map` на любые контейнеры, а `<*>` позволяет комбинировать независимые вычисления с эффектами. Паттерн `f <$> a <*> b <*> c` заменяет вложенные `case`, а тип `Validation` решает проблему накопления ошибок, которую `Either` не покрывает.
 
-- Познакомились с FFI — механизмом вызова C-функций из Haskell.
-- Разобрали маршаллинг типов: `CInt`, `CString`, `Ptr`.
-- Разобрали типы строк: `String`, `Text` и `ByteString` — их различия, конвертации и `OverloadedStrings`.
-- Освоили `aeson` — стандартную библиотеку для работы с JSON.
-- Научились использовать Generic-деривацию и писать ручные экземпляры `ToJSON` / `FromJSON`.
-- Разобрали опциональные поля и значения по умолчанию.
+Но `Applicative` работает только с **независимыми** вычислениями. Что, если результат одного вычисления нужен *внутри* другого? Для этого нам понадобятся **монады** — тема [следующей главы](chapter12.md).
 
-В следующей главе мы погрузимся в трансформеры монад и создадим текстовую RPG-игру.
+```admonish tip title="Для углубления"
+- **Haskell MOOC** — [haskell.mooc.fi](https://haskell.mooc.fi/), лекции 12 и 15: Functors, Applicatives.
+- **Typeclassopedia** — Brent Yorgey, раздел Functor и Applicative: [wiki.haskell.org/Typeclassopedia](https://wiki.haskell.org/Typeclassopedia).
+- **Learn You a Haskell** — глава «Functors, Applicative Functors and Monoids»: [learnyouahaskell.com](http://learnyouahaskell.com/functors-applicative-functors-and-monoids).
+```

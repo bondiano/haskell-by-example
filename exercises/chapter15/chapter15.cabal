@@ -6,15 +6,13 @@ cabal-version: 1.12
 
 name:           chapter15
 version:        0.1.0.0
-synopsis:       Haskell by Example — Глава 15: Предметно-ориентированные языки
+synopsis:       Haskell by Example — Глава 15: Организация проекта
 license:        MIT
 build-type:     Simple
 
 library
   exposed-modules:
-      Language.Expr
-      Language.Expr.Parser
-      Language.Json
+      TaskTracker
   other-modules:
       Paths_chapter15
   hs-source-dirs:
@@ -38,8 +36,7 @@ library
   build-depends:
       base >=4.18 && <5
     , containers
-    , megaparsec
-    , parser-combinators
+    , text
   default-language: Haskell2010
 
 test-suite chapter15-tests
@@ -71,5 +68,5 @@ test-suite chapter15-tests
     , chapter15
     , containers
     , hspec
-    , megaparsec
+    , text
   default-language: Haskell2010

@@ -1,0 +1,72 @@
+version: "3"
+
+tasks:
+  default:
+    desc: Показать список задач
+    cmds:
+      - task --list
+
+  # ── Build ──────────────────────────────────────────────────────────────────
+
+  build:
+    desc: Собрать всё (Haskell + книга)
+    cmds:
+      - task: build:haskell
+      - task: build:book
+
+  build:haskell:
+    desc: Собрать все Haskell-пакеты
+    cmds:
+      - stack build
+
+  build:book:
+    desc: Собрать HTML-книгу (вывод в output/)
+    cmds:
+      - mdbook build
+
+  # ── Test ───────────────────────────────────────────────────────────────────
+
+  test:
+    desc: Запустить все тесты
+    cmds:
+      - stack test
+
+  test:chapter:
+    desc: "Запустить тесты одной главы (CHAPTER=02)"
+    cmds:
+      - stack test chapter{{.CHAPTER}}
+    requires:
+      vars:
+        - CHAPTER
+
+  # ── Lint ───────────────────────────────────────────────────────────────────
+
+  lint:
+    desc: Запустить все линтеры (HLint + Fourmolu + markdownlint)
+    cmds:
+      - task: lint:hs
+      - task: lint:md
+
+  lint:hs:
+    desc: Проверить Haskell-код (HLint + Fourmolu)
+    cmds:
+      - ./scripts/lint.sh
+
+  lint:md:
+    desc: Проверить Markdown-файлы (markdownlint-cli2)
+    cmds:
+      - npx markdownlint-cli2 "text/**/*.md"
+
+  # ── Format ─────────────────────────────────────────────────────────────────
+
+  format:
+    desc: Отформатировать весь Haskell-код (Fourmolu)
+    cmds:
+      - ./scripts/format.sh
+
+  # ── Misc ───────────────────────────────────────────────────────────────────
+
+  prepare:
+    desc: Сбросить решения студентов к заглушкам (для дистрибуции)
+    cmds:
+      - ./scripts/prepare-exercises.sh

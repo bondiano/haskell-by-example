@@ -1,66 +1,119 @@
 module Solutions where
 
-import Control.Lens
-import Data.Char (toUpper)
-import Data.Functor.Const (Const(..))
-import Data.Functor.Identity (Identity(..))
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
+import Data.Text (Text)
+import Data.Text qualified as T
 
-import Data.Company
+import TaskTracker
 
--- Упражнение 1: линзы для Person / Address
+-- ============================================================
+-- Упражнение 1: Логика завершения задачи
+-- ============================================================
 
-data Address = Address
-  { _city   :: String
-  , _street :: String
-  , _zipCode :: String
-  } deriving stock (Show, Eq)
+{- | Проверяем текущий статус — если Done, ошибка;
+иначе возвращаем задачу с Done.
+-}
+handleCompleteLogic :: Task -> Either Text Task
+handleCompleteLogic task
+  | taskStatus task == Done = Left "Задача уже выполнена"
+  | otherwise = Right task{taskStatus = Done}
 
-makeLenses ''Address
+-- ============================================================
+-- Упражнение 2: Статистика по статусам
+-- ============================================================
 
-data Person = Person
-  { _personName    :: String
-  , _personAge     :: Int
-  , _personAddress :: Address
-  } deriving stock (Show, Eq)
+{- | Для каждой задачи определяем ключ статуса,
+затем группируем и считаем через Map.
+-}
+computeStatsMap :: [Task] -> Map Text Int
+computeStatsMap tasks =
+  let statusKey Todo = "todo"
+      statusKey InProgress = "in_progress"
+      statusKey Done = "done"
+      keys = map (statusKey . taskStatus) tasks
+   in Map.fromListWith (+) [(k, 1) | k <- keys]
 
-makeLenses ''Person
+-- ============================================================
+-- Упражнение 3: Пагинация
+-- ============================================================
 
-getCity :: Person -> String
-getCity = view (personAddress . city)
+-- | Пропускаем (page - 1) * perPage элементов, берём perPage.
+paginate :: Int -> Int -> [a] -> [a]
+paginate page perPage = take perPage . drop ((page - 1) * perPage)
 
-setCity :: String -> Person -> Person
-setCity = set (personAddress . city)
+-- ============================================================
+-- Упражнение 4: Поиск по названию
+-- ============================================================
 
-upperName :: Person -> Person
-upperName = over personName (map toUpper)
+{- | Приводим и запрос, и название к нижнему регистру,
+затем проверяем вхождение через T.isInfixOf.
+-}
+searchByTitle :: Text -> [Task] -> [Task]
+searchByTitle query = filter (\t -> needle `T.isInfixOf` T.toLower (taskTitle t))
+ where
+  needle = T.toLower query
 
--- Упражнение 2: повышение зарплаты через traversal
+-- ============================================================
+-- Упражнение 5: Валидация приоритета
+-- ============================================================
 
-raiseSalary :: Double -> Company -> Company
-raiseSalary amount =
-  over (companyDepartments . traversed . departmentEmployees . traversed . employeeSalary)
-       (+ amount)
+-- | Приводим к нижнему регистру и проверяем допустимость.
+validatePriority :: Text -> Either Text Text
+validatePriority input =
+  let lowered = T.toLower input
+   in if lowered `elem` ["low", "medium", "high"]
+        then Right lowered
+        else Left ("Неизвестный приоритет: " <> input)
 
--- Упражнение 3: извлечение Right-значений через призму
+-- ============================================================
+-- Упражнение 6: Конвертация Task в TaskResponse
+-- ============================================================
 
-rightValues :: [Either String Int] -> [Int]
-rightValues = toListOf (traversed . _Right)
+-- | Используем priorityToText и statusToText для конвертации.
+entityToResponse :: Int -> Task -> TaskResponse
+entityToResponse eid task =
+  TaskResponse
+    { responseId = eid
+    , responseTitle = taskTitle task
+    , responsePriority = priorityToText (taskPriority task)
+    , responseStatus = statusToText (taskStatus task)
+    }
 
--- Упражнение 4: van Laarhoven lens
+-- ============================================================
+-- Упражнение 7: Конвертация Priority ↔ Text
+-- ============================================================
 
-type MyLens s a = forall f. Functor f => (a -> f a) -> s -> f s
+-- | Простое сопоставление с образцом.
+priorityToText :: Priority -> Text
+priorityToText Low = "low"
+priorityToText Medium = "medium"
+priorityToText High = "high"
 
-myView :: MyLens s a -> s -> a
-myView l s = getConst (l Const s)
+-- | Приводим к нижнему регистру и сопоставляем.
+textToPriority :: Text -> Either Text Priority
+textToPriority t =
+  case T.toLower t of
+    "low" -> Right Low
+    "medium" -> Right Medium
+    "high" -> Right High
+    _ -> Left ("Неизвестный приоритет: " <> t)
 
-myOver :: MyLens s a -> (a -> a) -> s -> s
-myOver l f s = runIdentity (l (Identity . f) s)
+-- ============================================================
+-- Упражнение 8: Конвертация Status ↔ Text
+-- ============================================================
 
-mySet :: MyLens s a -> a -> s -> s
-mySet l a = myOver l (const a)
+-- | Простое сопоставление с образцом.
+statusToText :: Status -> Text
+statusToText Todo = "todo"
+statusToText InProgress = "in_progress"
+statusToText Done = "done"
 
-fstL :: MyLens (a, b) a
-fstL f (a, b) = (\a' -> (a', b)) <$> f a
-
-sndL :: MyLens (a, b) b
-sndL f (a, b) = (\b' -> (a, b')) <$> f b
+-- | Приводим к нижнему регистру и сопоставляем.
+textToStatus :: Text -> Either Text Status
+textToStatus t =
+  case T.toLower t of
+    "todo" -> Right Todo
+    "in_progress" -> Right InProgress
+    "done" -> Right Done
+    _ -> Left ("Неизвестный статус: " <> t)

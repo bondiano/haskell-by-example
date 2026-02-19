@@ -6,14 +6,13 @@ cabal-version: 1.12
 
 name:           chapter08
 version:        0.1.0.0
-synopsis:       Haskell by Example — Глава 8: Монады
+synopsis:       Haskell by Example — Глава 8: Обработка ошибок
 license:        MIT
 build-type:     Simple
 
 library
   exposed-modules:
-      Data.Chess
-      Data.Phonebook
+      TaskTracker
   other-modules:
       Paths_chapter08
   hs-source-dirs:
@@ -37,7 +36,7 @@ library
   build-depends:
       base >=4.18 && <5
     , containers
-    , mtl
+    , text
   default-language: Haskell2010
 
 test-suite chapter08-tests
@@ -69,5 +68,5 @@ test-suite chapter08-tests
     , chapter08
     , containers
     , hspec
-    , mtl
+    , text
   default-language: Haskell2010

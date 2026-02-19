@@ -1,6 +1,6 @@
 name: chapter04
 version: 0.1.0.0
-synopsis: "Haskell by Example — Глава 4: Сопоставление с образцом"
+synopsis: "Haskell by Example — Глава 4: Списки, рекурсия и свёртки"
 license: MIT
 
 default-extensions:

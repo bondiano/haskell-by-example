@@ -1,54 +1,32 @@
-{-# OPTIONS_GHC -Wno-orphans #-}
-
 module MySolutions where
 
-import Data.Hashable
-import Data.List (foldl')
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
+import Data.Set qualified as Set
+import Data.Text (Text)
+import Data.Text qualified as T
+import TaskTracker
 
--- Упражнение 1: ручные экземпляры Eq и Show для Coord
+-- | Упражнение 1: Количество задач в хранилище.
+storeSize :: TaskStore -> Int
+storeSize = undefined
 
-instance Eq Coord where
-  (==) = undefined
+-- | Упражнение 2: Обновить статус задачи по идентификатору.
+updateTaskStatus :: TaskId -> Status -> TaskStore -> TaskStore
+updateTaskStatus = undefined
 
-instance Show Coord where
-  show = undefined
+-- | Упражнение 3: Найти все задачи с данным тегом.
+findByTag :: Tag -> TaskStore -> [Task]
+findByTag = undefined
 
--- Упражнение 2: экземпляры Hashable для Maybe, Either, []
+-- | Упражнение 4: Инвертировать отображение (поменять ключи и значения местами).
+invertMap :: (Ord k, Ord v) => Map k v -> Map v k
+invertMap = undefined
 
-instance Hashable a => Hashable (Maybe a) where
-  hash = undefined
+-- | Упражнение 5: Общие элементы двух списков (через Set).
+commonElements :: (Ord a) => [a] -> [a] -> [a]
+commonElements = undefined
 
-instance (Hashable a, Hashable b) => Hashable (Either a b) where
-  hash = undefined
-
-instance Hashable a => Hashable [a] where
-  hash = undefined
-
--- Упражнение 3: удаление дубликатов
-
-nubByHash :: (Eq a, Hashable a) => [a] -> [a]
-nubByHash = undefined
-
--- Упражнение 4: DerivingStrategies для Brightness
-
-newtype Brightness = Brightness { getBrightness :: Int }
-
-instance Show Brightness where
-  show = undefined
-
-instance Eq Brightness where
-  (==) = undefined
-
-instance Ord Brightness where
-  compare = undefined
-
-instance Num Brightness where
-  (+) = undefined
-  (*) = undefined
-  abs = undefined
-  signum = undefined
-  fromInteger = undefined
-  negate = undefined
-
-instance Hashable Brightness where
-  hash = undefined
+-- | Упражнение 6: Частотный словарь слов в тексте (слова приведены к нижнему регистру).
+wordFrequency :: Text -> Map Text Int
+wordFrequency = undefined

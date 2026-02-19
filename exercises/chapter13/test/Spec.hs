@@ -1,99 +1,128 @@
 module Main where
 
+import Data.Map.Strict qualified as Map
 import Test.Hspec
-import Data.Set qualified as Set
 
-import Graphics
 import MySolutions
+import TaskTracker
 
 main :: IO ()
 main = hspec $ do
-  describe "lerp / rotatePt (предоставлено)" $ do
-    it "lerp 0.5 — середина отрезка" $
-      lerp 0.5 (0, 0) (10, 0) `shouldBe` (5.0, 0.0)
+  -- ===========================================================
+  -- Упражнение 1: deleteTaskPure
+  -- ===========================================================
+  describe "Упражнение 1: deleteTaskPure" $ do
+    it "удаляет существующую задачу" $
+      case deleteTaskPure (TaskId 1) exampleStore of
+        Right (TaskStore m) -> Map.member (TaskId 1) m `shouldBe` False
+        Left err -> expectationFailure $ "Ожидали Right, получили: " ++ show err
 
-    it "distance 3-4-5" $
-      distance (0, 0) (3, 4) `shouldBe` 5.0
+    it "размер уменьшается на 1 после удаления" $
+      case deleteTaskPure (TaskId 1) exampleStore of
+        Right (TaskStore m) -> Map.size m `shouldBe` 2
+        Left err -> expectationFailure $ "Ожидали Right, получили: " ++ show err
 
-  describe "neighbors / countAlive (упражнение 1)" $ do
-    it "у клетки 8 соседей" $
-      length (neighbors (0, 0)) `shouldBe` 8
+    it "ошибка при удалении несуществующей задачи" $
+      deleteTaskPure (TaskId 99) exampleStore
+        `shouldBe` Left (TaskNotFound (TaskId 99))
 
-    it "соседи не включают саму клетку" $
-      (0, 0) `notElem` neighbors (0, 0) `shouldBe` True
+    it "ошибка при удалении из пустого хранилища" $
+      deleteTaskPure (TaskId 1) emptyStore
+        `shouldBe` Left (TaskNotFound (TaskId 1))
 
-    it "соседи (1,1) содержат (0,0)" $
-      (0, 0) `elem` neighbors (1, 1) `shouldBe` True
+  -- ===========================================================
+  -- Упражнение 2: listTasksPure
+  -- ===========================================================
+  describe "Упражнение 2: listTasksPure" $ do
+    it "возвращает все задачи из хранилища" $
+      length (listTasksPure exampleStore) `shouldBe` 3
 
-    it "countAlive для центра блока" $
-      countAlive block (0, 0) `shouldBe` 3
+    it "пустое хранилище → пустой список" $
+      listTasksPure emptyStore `shouldBe` []
 
-    it "countAlive для изолированной клетки" $
-      countAlive (gridFromList [(5, 5)]) (5, 5) `shouldBe` 0
+    it "содержит правильные задачи" $
+      let tasks = listTasksPure exampleStore
+       in map fst tasks `shouldBe` [TaskId 1, TaskId 2, TaskId 3]
 
-    it "countAlive для мёртвой клетки рядом с блинкером" $
-      countAlive blinker (1, 0) `shouldBe` 3
+  -- ===========================================================
+  -- Упражнение 3: runCalc
+  -- ===========================================================
+  describe "Упражнение 3: runCalc" $ do
+    it "запускает простое вычисление" $
+      runCalc (pure 42) `shouldBe` Right (42 :: Int, [])
 
-  describe "stepLife (упражнение 2)" $ do
-    it "блок стабилен" $
-      stepLife block `shouldBe` block
+    it "начальный журнал пуст" $
+      case runCalc (pure "hello") of
+        Right (_, log') -> log' `shouldBe` []
+        Left err -> expectationFailure $ "Ожидали Right, получили: " ++ err
 
-    it "блинкер осциллирует (период 2)" $ do
-      let step1 = stepLife blinker
-      step1 `shouldBe` gridFromList [(-1, 0), (0, 0), (1, 0)]
-      stepLife step1 `shouldBe` blinker
+  -- ===========================================================
+  -- Упражнение 4: calcDivide
+  -- ===========================================================
+  describe "Упражнение 4: calcDivide" $ do
+    it "делит числа и записывает в журнал" $
+      case runCalc (calcDivide 10 2) of
+        Right (result, log') -> do
+          result `shouldBe` 5.0
+          length log' `shouldBe` 1
+        Left err -> expectationFailure $ "Ожидали Right, получили: " ++ err
 
-    it "пустая сетка остаётся пустой" $
-      stepLife Set.empty `shouldBe` Set.empty
+    it "деление на ноль — ошибка" $
+      runCalc (calcDivide 10 0) `shouldBe` Left "Деление на ноль"
 
-    it "одиночная клетка умирает" $
-      stepLife (gridFromList [(0, 0)]) `shouldBe` Set.empty
+    it "журнал содержит запись об операции" $
+      case runCalc (calcDivide 10 2) of
+        Right (_, log') -> head log' `shouldBe` "10.0 / 2.0 = 5.0"
+        Left err -> expectationFailure $ "Ожидали Right, получили: " ++ err
 
-    it "глайдер сдвигается за 4 шага" $ do
-      let step4 = iterate stepLife glider !! 4
-      step4 `shouldBe` gridFromList [(2, 1), (3, 2), (1, 3), (2, 3), (3, 3)]
+    it "несколько делений — несколько записей" $
+      case runCalc (calcDivide 10 2 >> calcDivide 6 3) of
+        Right (result, log') -> do
+          result `shouldBe` 2.0
+          length log' `shouldBe` 2
+        Left err -> expectationFailure $ "Ожидали Right, получили: " ++ err
 
-  describe "stepBall (упражнение 3)" $ do
-    it "мяч движется по скорости" $ do
-      let state = BallState (50, 50) (10, 5)
-      stepBall 100 100 1 state `shouldBe` BallState (60, 55) (10, 5)
+    it "ошибка в середине — всё вычисление падает" $
+      runCalc (calcDivide 10 2 >> calcDivide 5 0 >> calcDivide 1 1)
+        `shouldBe` Left "Деление на ноль"
 
-    it "отражение от правой стены" $ do
-      let state = BallState (95, 50) (10, 0)
-      stepBall 100 100 1 state `shouldBe` BallState (95, 50) (-10, 0)
+  -- ===========================================================
+  -- Упражнение 5: calcHistory
+  -- ===========================================================
+  describe "Упражнение 5: calcHistory" $ do
+    it "пустой журнал в начале" $
+      runCalc calcHistory `shouldBe` Right ([] :: [String], [])
 
-    it "отражение от нижней стены" $ do
-      let state = BallState (50, 5) (0, -10)
-      stepBall 100 100 1 state `shouldBe` BallState (50, 5) (0, 10)
+    it "журнал после одного деления" $
+      case runCalc (calcDivide 10 2 >> calcHistory) of
+        Right (history, _) -> history `shouldBe` ["10.0 / 2.0 = 5.0"]
+        Left err -> expectationFailure $ "Ожидали Right, получили: " ++ err
 
-    it "отражение от левой стены" $ do
-      let state = BallState (3, 50) (-5, 0)
-      stepBall 100 100 1 state `shouldBe` BallState (2, 50) (5, 0)
+    it "журнал после двух делений" $
+      case runCalc (calcDivide 10 2 >> calcDivide 6 3 >> calcHistory) of
+        Right (history, _) -> length history `shouldBe` 2
+        Left err -> expectationFailure $ "Ожидали Right, получили: " ++ err
 
-    it "без движения при dt=0" $ do
-      let state = BallState (50, 50) (100, 100)
-      stepBall 100 100 0 state `shouldBe` state
+  -- ===========================================================
+  -- Упражнение 6: calcChain
+  -- ===========================================================
+  describe "Упражнение 6: calcChain" $ do
+    it "результат цепочки 100 / 5 / 4 = 5.0" $
+      case runCalc calcChain of
+        Right (result, _) -> result `shouldBe` 5.0
+        Left err -> expectationFailure $ "Ожидали Right, получили: " ++ err
 
-  describe "kochPoints (упражнение 4)" $ do
-    it "глубина 0 — 2 точки" $
-      length (kochPoints 0 (0, 0) (9, 0)) `shouldBe` 2
+    it "журнал содержит две записи" $
+      case runCalc calcChain of
+        Right (_, log') -> length log' `shouldBe` 2
+        Left err -> expectationFailure $ "Ожидали Right, получили: " ++ err
 
-    it "глубина 1 — 5 точек" $
-      length (kochPoints 1 (0, 0) (9, 0)) `shouldBe` 5
+    it "первая запись — 100 / 5" $
+      case runCalc calcChain of
+        Right (_, log') -> head log' `shouldBe` "100.0 / 5.0 = 20.0"
+        Left err -> expectationFailure $ "Ожидали Right, получили: " ++ err
 
-    it "глубина 2 — 17 точек" $
-      length (kochPoints 2 (0, 0) (9, 0)) `shouldBe` 17
-
-    it "глубина 3 — 65 точек (4^3 + 1)" $
-      length (kochPoints 3 (0, 0) (9, 0)) `shouldBe` 65
-
-    it "первая точка = start" $
-      head (kochPoints 3 (0, 0) (9, 0)) `shouldBe` (0, 0)
-
-    it "последняя точка = end" $
-      last (kochPoints 3 (0, 0) (9, 0)) `shouldBe` (9, 0)
-
-    it "на глубине 1 пик выше оси x" $ do
-      let pts = kochPoints 1 (0, 0) (9, 0)
-      let (_, peakY) = pts !! 2
-      peakY `shouldSatisfy` (> 0)
+    it "вторая запись — 20 / 4" $
+      case runCalc calcChain of
+        Right (_, log') -> log' !! 1 `shouldBe` "20.0 / 4.0 = 5.0"
+        Left err -> expectationFailure $ "Ожидали Right, получили: " ++ err

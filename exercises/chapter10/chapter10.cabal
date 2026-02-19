@@ -6,13 +6,13 @@ cabal-version: 1.12
 
 name:           chapter10
 version:        0.1.0.0
-synopsis:       Haskell by Example — Глава 10: Асинхронные эффекты
+synopsis:       Haskell by Example — Глава 10: Тестирование: hspec и QuickCheck
 license:        MIT
 build-type:     Simple
 
 library
   exposed-modules:
-      Concurrent
+      TaskTracker
   other-modules:
       Paths_chapter10
   hs-source-dirs:
@@ -34,10 +34,8 @@ library
       NumericUnderscores
       ImportQualifiedPost
   build-depends:
-      async
-    , base >=4.18 && <5
-    , stm
-    , time
+      base >=4.18 && <5
+    , containers
   default-language: Haskell2010
 
 test-suite chapter10-tests
@@ -65,11 +63,9 @@ test-suite chapter10-tests
       NumericUnderscores
       ImportQualifiedPost
   build-depends:
-      async
+      QuickCheck
     , base >=4.18 && <5
     , chapter10
-    , directory
+    , containers
     , hspec
-    , stm
-    , time
   default-language: Haskell2010

@@ -6,13 +6,13 @@ cabal-version: 1.12
 
 name:           chapter02
 version:        0.1.0.0
-synopsis:       Haskell by Example — Глава 2: Начало работы
+synopsis:       Haskell by Example — Глава 2: Типы, функции и REPL
 license:        MIT
 build-type:     Simple
 
 library
   exposed-modules:
-      Euler
+      TaskTracker
   other-modules:
       Paths_chapter02
   hs-source-dirs:

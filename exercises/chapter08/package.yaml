@@ -1,6 +1,6 @@
 name: chapter08
 version: 0.1.0.0
-synopsis: "Haskell by Example — Глава 8: Монады"
+synopsis: "Haskell by Example — Глава 8: Обработка ошибок"
 license: MIT
 
 default-extensions:
@@ -27,7 +27,7 @@ library:
   source-dirs: src
   dependencies:
     - containers
-    - mtl
+    - text
 
 tests:
   chapter08-tests:
@@ -37,4 +37,4 @@ tests:
       - chapter08
       - hspec
       - containers
-      - mtl
+      - text

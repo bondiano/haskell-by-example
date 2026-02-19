@@ -1,43 +1,37 @@
-{-# OPTIONS_GHC -Wno-orphans #-}
-
 module Solutions where
 
-import Data.Hashable
 import Data.List (foldl')
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
+import Data.Set qualified as Set
+import Data.Text (Text)
+import Data.Text qualified as T
+import TaskTracker
 
--- Упражнение 1: ручные экземпляры Eq и Show для Coord
+-- | Упражнение 1: Количество задач в хранилище.
+storeSize :: TaskStore -> Int
+storeSize = Map.size . unTaskStore
 
-instance Eq Coord where
-  Coord x1 y1 == Coord x2 y2 = x1 == x2 && y1 == y2
+-- | Упражнение 2: Обновить статус задачи по идентификатору.
+updateTaskStatus :: TaskId -> Status -> TaskStore -> TaskStore
+updateTaskStatus tid newStatus (TaskStore m) =
+  TaskStore (Map.adjust (\task -> task{taskStatus = newStatus}) tid m)
 
-instance Show Coord where
-  show (Coord x y) = "(" <> show x <> ", " <> show y <> ")"
+-- | Упражнение 3: Найти все задачи с данным тегом.
+findByTag :: Tag -> TaskStore -> [Task]
+findByTag tag (TaskStore m) =
+  Map.elems (Map.filter (Set.member tag . taskTags) m)
 
--- Упражнение 2: экземпляры Hashable для Maybe, Either, []
+-- | Упражнение 4: Инвертировать отображение.
+invertMap :: (Ord k, Ord v) => Map k v -> Map v k
+invertMap = Map.fromList . map (\(k, v) -> (v, k)) . Map.toList
 
-instance Hashable a => Hashable (Maybe a) where
-  hash Nothing  = 0
-  hash (Just a) = combineHashes 1 (hash a)
+-- | Упражнение 5: Общие элементы двух списков (через Set).
+commonElements :: (Ord a) => [a] -> [a] -> [a]
+commonElements xs ys =
+  Set.toList (Set.intersection (Set.fromList xs) (Set.fromList ys))
 
-instance (Hashable a, Hashable b) => Hashable (Either a b) where
-  hash (Left a)  = combineHashes 0 (hash a)
-  hash (Right b) = combineHashes 1 (hash b)
-
-instance Hashable a => Hashable [a] where
-  hash = foldl' (\acc x -> combineHashes acc (hash x)) 0
-
--- Упражнение 3: удаление дубликатов
-
-nubByHash :: (Eq a, Hashable a) => [a] -> [a]
-nubByHash = go []
-  where
-    go _ []     = []
-    go seen (x:xs)
-      | x `elem` seen = go seen xs
-      | otherwise      = x : go (x : seen) xs
-
--- Упражнение 4: DerivingStrategies для Brightness
-
-newtype Brightness = Brightness { getBrightness :: Int }
-  deriving stock (Show, Read)
-  deriving newtype (Eq, Ord, Num, Hashable)
+-- | Упражнение 6: Частотный словарь слов в тексте.
+wordFrequency :: Text -> Map Text Int
+wordFrequency t =
+  foldl' (\acc w -> Map.insertWith (+) w 1 acc) Map.empty (map T.toLower (T.words t))

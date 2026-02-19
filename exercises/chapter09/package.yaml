@@ -1,6 +1,6 @@
 name: chapter09
 version: 0.1.0.0
-synopsis: "Haskell by Example — Глава 9: Монада эффектов"
+synopsis: "Haskell by Example — Глава 9: Ленивость, строгость и производительность"
 license: MIT
 
 default-extensions:
@@ -19,6 +19,7 @@ default-extensions:
   - TupleSections
   - NumericUnderscores
   - ImportQualifiedPost
+  - BangPatterns
 
 dependencies:
   - base >= 4.18 && < 5

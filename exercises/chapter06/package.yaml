@@ -1,6 +1,6 @@
 name: chapter06
 version: 0.1.0.0
-synopsis: "Haskell by Example — Глава 6: Классы типов"
+synopsis: "Haskell by Example — Глава 6: Стандартные структуры данных"
 license: MIT
 
 default-extensions:
@@ -22,6 +22,8 @@ default-extensions:
 
 dependencies:
   - base >= 4.18 && < 5
+  - containers
+  - text
 
 library:
   source-dirs: src

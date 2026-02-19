@@ -1,72 +1,69 @@
 module Solutions where
 
+import Data.Char (toLower)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Control.Monad.Writer
 
-import Data.Phonebook (Phonebook)
-import Data.Chess (KnightPos, moveKnight)
+import TaskTracker
 
 -- ============================================================
--- Упражнение 1: Безопасный поиск в телефонной книге
+-- Упражнение 1: Безопасное удаление задачи
 -- ============================================================
 
--- | Поиск телефона по городу и имени через >>=.
--- Map.lookup возвращает Maybe, и >>= протаскивает Nothing автоматически.
-safeLookup :: String -> String -> Phonebook -> Maybe String
-safeLookup city name book =
-  Map.lookup city book >>= Map.lookup name
+{- | Удаление задачи — проверяем наличие через lookupTask,
+затем удаляем через Map.delete.
+-}
+deleteTaskSafe :: TaskId -> TaskStore -> Either AppError TaskStore
+deleteTaskSafe tid store@(TaskStore m) =
+  case lookupTask tid store of
+    Nothing -> Left (TaskNotFound tid)
+    Just _ -> Right (TaskStore (Map.delete tid m))
 
 -- ============================================================
--- Упражнение 2: Безопасная индексация и цепочка
+-- Упражнение 2: Обновление названия задачи
 -- ============================================================
 
--- | Безопасный доступ по индексу (0-based).
-safeIndex :: [a] -> Int -> Maybe a
-safeIndex xs i
-  | i < 0     = Nothing
-  | otherwise = case drop i xs of
-      []    -> Nothing
-      (x:_) -> Just x
-
--- | Безопасная голова списка.
-safeHead :: [a] -> Maybe a
-safeHead []    = Nothing
-safeHead (x:_) = Just x
-
--- | Третий элемент первого подсписка.
--- Цепочка: safeHead достаёт первый подсписок,
--- затем safeIndex достаёт элемент с индексом 2.
-thirdElement :: [[a]] -> Maybe a
-thirdElement xss = safeHead xss >>= \xs -> safeIndex xs 2
+{- | Сначала проверяем пустое название, затем наличие задачи.
+Обновляем через Map.adjust.
+-}
+updateTitle :: TaskId -> String -> TaskStore -> Either AppError TaskStore
+updateTitle _ "" _ = Left (InvalidInput "Пустое название")
+updateTitle tid newTitle store@(TaskStore m) =
+  case lookupTask tid store of
+    Nothing -> Left (TaskNotFound tid)
+    Just task ->
+      let updated = task{taskTitle = newTitle}
+       in Right (TaskStore (Map.insert tid updated m))
 
 -- ============================================================
--- Упражнение 3: Ходы шахматного коня
+-- Упражнение 3: Безопасное деление
 -- ============================================================
 
--- | Проверяет, может ли конь достичь цели за ровно n ходов.
---
--- Генерируем все возможные позиции после n ходов через >>=:
--- каждое применение >>= с moveKnight разворачивает один ход.
--- За n ходов получаем список всех достижимых позиций.
-canReachIn :: Int -> KnightPos -> KnightPos -> Bool
-canReachIn n start end = end `elem` reachable n [start]
-  where
-    reachable 0 positions = positions
-    reachable k positions = reachable (k - 1) (positions >>= moveKnight)
+-- | Проверяем делитель на ноль, иначе делим через div.
+safeDiv :: Int -> Int -> Either String Int
+safeDiv _ 0 = Left "Деление на ноль"
+safeDiv a b = Right (a `div` b)
 
 -- ============================================================
--- Упражнение 4: Логирование через Writer
+-- Упражнение 4: Парсинг приоритета
 -- ============================================================
 
--- | Последовательность Коллатца с логированием.
---
--- При каждом шаге записываем "n → m" в лог через tell.
--- Считаем количество шагов до достижения 1.
-collatzLog :: Int -> Writer [String] Int
-collatzLog 1 = return 0
-collatzLog n = do
-  let next = if even n then n `div` 2 else 3 * n + 1
-  tell [show n ++ " \8594 " ++ show next]
-  rest <- collatzLog next
-  return (rest + 1)
+-- | Приводим строку к нижнему регистру и сопоставляем.
+parsePriority :: String -> Either String Priority
+parsePriority s =
+  case map toLower s of
+    "low" -> Right Low
+    "medium" -> Right Medium
+    "high" -> Right High
+    _ -> Left ("Неизвестный приоритет: " ++ s)
+
+-- ============================================================
+-- Упражнение 5: Цепочка операций
+-- ============================================================
+
+{- | foldl с >>= — каждая операция получает результат предыдущей.
+При первой ошибке (Left) >>= прекращает выполнение.
+-}
+chainOperations ::
+  [TaskStore -> Either AppError TaskStore] -> TaskStore -> Either AppError TaskStore
+chainOperations ops store = foldl (>>=) (Right store) ops

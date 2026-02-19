@@ -6,13 +6,13 @@ cabal-version: 1.12
 
 name:           chapter12
 version:        0.1.0.0
-synopsis:       Haskell by Example — Глава 12: Приключения с монадами
+synopsis:       Haskell by Example — Глава 12: Монады
 license:        MIT
 build-type:     Simple
 
 library
   exposed-modules:
-      Game
+      TaskTracker
   other-modules:
       Paths_chapter12
   hs-source-dirs:
@@ -34,11 +34,8 @@ library
       NumericUnderscores
       ImportQualifiedPost
   build-depends:
-      aeson
-    , base >=4.18 && <5
-    , bytestring
+      base >=4.18 && <5
     , containers
-    , mtl
   default-language: Haskell2010
 
 test-suite chapter12-tests
@@ -66,12 +63,8 @@ test-suite chapter12-tests
       NumericUnderscores
       ImportQualifiedPost
   build-depends:
-      aeson
-    , base >=4.18 && <5
-    , bytestring
+      base >=4.18 && <5
     , chapter12
     , containers
-    , directory
     , hspec
-    , mtl
   default-language: Haskell2010

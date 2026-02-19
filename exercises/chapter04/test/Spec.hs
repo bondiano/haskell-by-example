@@ -1,67 +1,142 @@
 module Main where
 
+import MySolutions (
+  chunksOf,
+  completionRate,
+  computeStats,
+  frequencies,
+  myMap,
+  myReverse,
+  sortByPriority,
+ )
+import TaskTracker
 import Test.Hspec
-import Data.Picture
-import MySolutions (area, scale, shapeText)
 
 main :: IO ()
 main = hspec $ do
-  describe "showShape" $ do
-    it "отображает круг" $
-      showShape (Circle origin 5.0)
-        `shouldBe` "Circle [center: (0.0, 0.0), radius: 5.0]"
+  describe "computeStats" $ do
+    it "считает статистику для exampleTasks" $ do
+      let stats = computeStats exampleTasks
+      totalTasks stats `shouldBe` 5
+      todoCount stats `shouldBe` 2
+      progressCount stats `shouldBe` 1
+      doneCount stats `shouldBe` 2
+      highCount stats `shouldBe` 2
 
-    it "отображает линию" $
-      showShape (Line (Point 1 2) (Point 3 4))
-        `shouldBe` "Line [(1.0, 2.0) \8594 (3.0, 4.0)]"
+    it "возвращает пустую статистику для пустого списка" $
+      computeStats [] `shouldBe` emptyStats
 
-  describe "shapeBounds" $ do
-    it "вычисляет границы круга" $
-      shapeBounds (Circle (Point 5 5) 3)
-        `shouldBe` Bounds { minX = 2, minY = 2, maxX = 8, maxY = 8 }
+    it "считает для одной задачи" $ do
+      let stats = computeStats [Task "A" "" High Todo]
+      totalTasks stats `shouldBe` 1
+      todoCount stats `shouldBe` 1
+      progressCount stats `shouldBe` 0
+      doneCount stats `shouldBe` 0
+      highCount stats `shouldBe` 1
 
-    it "вычисляет границы прямоугольника" $
-      shapeBounds (Rectangle (Point 1 1) 4 3)
-        `shouldBe` Bounds { minX = 1, minY = 1, maxX = 5, maxY = 4 }
+  describe "completionRate" $ do
+    it "вычисляет процент для exampleTasks" $
+      completionRate exampleTasks `shouldSatisfy` (\r -> abs (r - 0.4) < 1e-9)
 
-  describe "bounds" $ do
-    it "вычисляет границы картинки" $ do
-      let pic = [Circle origin 1, Rectangle (Point 2 2) 3 3]
-      bounds pic `shouldBe` Bounds { minX = -1, minY = -1, maxX = 5, maxY = 5 }
+    it "возвращает 0.0 для пустого списка" $
+      completionRate [] `shouldBe` 0.0
 
-  describe "area" $ do
-    it "площадь круга с радиусом 10" $
-      area (Circle origin 10) `shouldSatisfy` (\a -> abs (a - 100 * pi) < 1e-9)
+    it "возвращает 1.0 для полностью завершённого списка" $ do
+      let tasks = [Task "A" "" Low Done, Task "B" "" Medium Done]
+      completionRate tasks `shouldSatisfy` (\r -> abs (r - 1.0) < 1e-9)
 
-    it "площадь прямоугольника 3×4" $
-      area (Rectangle origin 3 4) `shouldBe` 12.0
+    it "возвращает 0.0 для списка без завершённых" $ do
+      let tasks = [Task "A" "" Low Todo, Task "B" "" Medium InProgress]
+      completionRate tasks `shouldBe` 0.0
 
-    it "площадь линии равна 0" $
-      area (Line origin (Point 5 5)) `shouldBe` 0.0
+  describe "sortByPriority" $ do
+    it "ставит High задачи первыми" $ do
+      let sorted = sortByPriority exampleTasks
+      taskPriority (head sorted) `shouldBe` High
 
-    it "площадь текста равна 0" $
-      area (Text origin "hello") `shouldBe` 0.0
+    it "сохраняет все задачи" $
+      length (sortByPriority exampleTasks) `shouldBe` length exampleTasks
 
-  describe "scale" $ do
-    it "масштабирует круг" $
-      scale 2 (Circle (Point 1 1) 5) `shouldBe` Circle (Point 2 2) 10
+    it "упорядочивает High > Medium > Low" $ do
+      let tasks =
+            [ Task "L" "" Low Todo
+            , Task "H" "" High Todo
+            , Task "M" "" Medium Todo
+            ]
+          sorted = sortByPriority tasks
+      map taskTitle sorted `shouldBe` ["H", "M", "L"]
 
-    it "масштабирует прямоугольник" $
-      scale 3 (Rectangle (Point 1 2) 4 5) `shouldBe` Rectangle (Point 3 6) 12 15
+    it "не меняет порядок задач с одинаковым приоритетом" $ do
+      let tasks =
+            [ Task "A" "" High Todo
+            , Task "B" "" High InProgress
+            ]
+          sorted = sortByPriority tasks
+      map taskTitle sorted `shouldBe` ["A", "B"]
 
-    it "масштабирует линию" $
-      scale 2 (Line (Point 1 1) (Point 3 4))
-        `shouldBe` Line (Point 2 2) (Point 6 8)
+    it "возвращает пустой список для пустого входа" $
+      sortByPriority [] `shouldBe` []
 
-    it "текст не масштабируется (только позиция)" $
-      scale 2 (Text (Point 3 4) "hi") `shouldBe` Text (Point 6 8) "hi"
+  describe "myReverse" $ do
+    it "переворачивает список чисел" $
+      myReverse [1, 2, 3 :: Int] `shouldBe` [3, 2, 1]
 
-  describe "shapeText" $ do
-    it "извлекает текст из Text" $
-      shapeText (Text origin "hello") `shouldBe` Just "hello"
+    it "переворачивает строку" $
+      myReverse "hello" `shouldBe` "olleh"
 
-    it "возвращает Nothing для Circle" $
-      shapeText (Circle origin 5) `shouldBe` Nothing
+    it "возвращает пустой список для пустого входа" $
+      myReverse ([] :: [Int]) `shouldBe` []
 
-    it "возвращает Nothing для Rectangle" $
-      shapeText (Rectangle origin 3 4) `shouldBe` Nothing
+    it "не меняет одноэлементный список" $
+      myReverse [42 :: Int] `shouldBe` [42]
+
+  describe "myMap" $ do
+    it "применяет функцию к каждому элементу" $
+      myMap (* 2) [1, 2, 3 :: Int] `shouldBe` [2, 4, 6]
+
+    it "преобразует типы" $
+      myMap show [1, 2, 3 :: Int] `shouldBe` ["1", "2", "3"]
+
+    it "возвращает пустой список для пустого входа" $
+      myMap (* 2) ([] :: [Int]) `shouldBe` []
+
+    it "работает с отрицательными числами" $
+      myMap negate [1, -2, 3 :: Int] `shouldBe` [-1, 2, -3]
+
+  describe "frequencies" $ do
+    it "подсчитывает частоты символов" $ do
+      let result = frequencies "abracadabra"
+      lookup 'a' result `shouldBe` Just 5
+      lookup 'b' result `shouldBe` Just 2
+      lookup 'r' result `shouldBe` Just 2
+      lookup 'c' result `shouldBe` Just 1
+      lookup 'd' result `shouldBe` Just 1
+
+    it "подсчитывает частоты чисел" $ do
+      let result = frequencies [1, 2, 1, 3, 2, 1 :: Int]
+      lookup 1 result `shouldBe` Just 3
+      lookup 2 result `shouldBe` Just 2
+      lookup 3 result `shouldBe` Just 1
+
+    it "возвращает пустой список для пустого входа" $
+      frequencies ([] :: [Int]) `shouldBe` []
+
+    it "возвращает единицу для уникальных элементов" $ do
+      let result = frequencies [1, 2, 3 :: Int]
+      all (\(_, c) -> c == 1) result `shouldBe` True
+
+  describe "chunksOf" $ do
+    it "разбивает на куски по 3" $
+      chunksOf 3 [1, 2, 3, 4, 5, 6, 7 :: Int] `shouldBe` [[1, 2, 3], [4, 5, 6], [7]]
+
+    it "разбивает на куски по 2" $
+      chunksOf 2 [1, 2, 3, 4 :: Int] `shouldBe` [[1, 2], [3, 4]]
+
+    it "возвращает пустой список для пустого входа" $
+      chunksOf 3 ([] :: [Int]) `shouldBe` []
+
+    it "возвращает один кусок для короткого списка" $
+      chunksOf 5 [1, 2, 3 :: Int] `shouldBe` [[1, 2, 3]]
+
+    it "разбивает по 1" $
+      chunksOf 1 [1, 2, 3 :: Int] `shouldBe` [[1], [2], [3]]

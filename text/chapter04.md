@@ -1,484 +1,482 @@
-# Сопоставление с образцом
+# Списки, рекурсия и свёртки
 
-## Цели главы
+В [главе 3](chapter03.md) мы описали фильтры для задач с помощью алгебраических типов и паттерн-матчинга. Теперь пора освоить главные инструменты работы со списками: рекурсию, `map`, `filter`, свёртки `foldr` и `foldl'`, а также практические функции вроде `zip`, `take`, `drop`, `span` и `break`. К концу главы мы реализуем сбор статистики по списку задач, сортировку по приоритету и группировку по статусу.
 
-В этой главе мы познакомимся с двумя тесно связанными понятиями: **алгебраическими типами данных** (АТД) и **сопоставлением с образцом** (pattern matching). Мы также разберём охранные выражения (guards), выражения `case`, а также паттерны `as` и wildcard.
+## Подготовка проекта
 
-Проект главы — библиотека для работы с геометрическими фигурами.
-
-## Простое сопоставление с образцом
-
-Начнём с примера. Вот функция, вычисляющая наибольший общий делитель двух целых чисел (алгоритм Евклида):
-
-```haskell
-gcd :: Int -> Int -> Int
-gcd n 0 = n
-gcd 0 m = m
-gcd n m
-  | n > m     = gcd (n - m) m
-  | otherwise = gcd n (m - n)
-```
-
-Функция определена несколькими **альтернативами** (уравнениями). Каждая альтернатива — это набор **образцов** (patterns) слева от `=` и результат справа. Альтернативы проверяются сверху вниз, и первая подходящая определяет результат.
-
-Разберём:
-
-1. Если второй аргумент равен `0`, возвращаем первый.
-2. Если первый аргумент равен `0`, возвращаем второй.
-3. Иначе — рекурсивно вычитаем меньшее из большего.
-
-## Виды образцов
-
-### Литеральные образцы
-
-Сопоставляются с конкретными значениями:
-
-```haskell
-isZero :: Int -> Bool
-isZero 0 = True
-isZero _ = False
-```
-
-Работают для `Int`, `Char`, `String` и других типов с литералами.
-
-### Переменные
-
-Связывают аргумент с именем:
-
-```haskell
-greet :: String -> String
-greet name = "Привет, " <> name <> "!"
-```
-
-### Wildcard (`_`)
-
-Сопоставляется с любым значением, не связывая его с именем:
-
-```haskell
-isZero :: Int -> Bool
-isZero 0 = True
-isZero _ = False   -- _ означает «всё остальное»
-```
-
-Удобно, когда значение аргумента не нужно в правой части.
-
-### Образцы конструкторов
-
-Разбирают значения алгебраических типов данных:
-
-```haskell
-fromMaybe :: a -> Maybe a -> a
-fromMaybe def Nothing  = def
-fromMaybe _   (Just x) = x
-```
-
-### Именованные образцы (`@`)
-
-Связывают значение целиком, одновременно разбирая его:
-
-```haskell
-showPoint :: Point -> String
-showPoint p@(Point x y) = show p <> " = (" <> show x <> ", " <> show y <> ")"
-```
-
-Здесь `p` привязана ко всему `Point`, а `x` и `y` — к его компонентам.
-
-### Образцы списков
-
-Списки можно сопоставлять по структуре:
-
-```haskell
-isEmpty :: [a] -> Bool
-isEmpty []    = True
-isEmpty (_:_) = False
-
-head' :: [a] -> Maybe a
-head' []    = Nothing
-head' (x:_) = Just x
-```
-
-Образец `(x:xs)` разбивает список на голову `x` и хвост `xs`.
-
-## Охранные выражения (Guards)
-
-Guards позволяют добавить условия к альтернативам:
-
-```haskell
-signum' :: Int -> Int
-signum' n
-  | n > 0     = 1
-  | n == 0    = 0
-  | otherwise = -1
-```
-
-Guard записывается после образцов через `|`. Проверяются сверху вниз. `otherwise` — это просто `True`, определённый в `Prelude`; он используется как «случай по умолчанию».
+Код этой главы находится в `exercises/chapter04`. Соберите проект:
 
 ```text
-> :type otherwise
-otherwise :: Bool
-
-> otherwise
-True
+$ cd exercises/chapter04
+$ stack build
 ```
 
-Guards можно комбинировать с образцами:
+## Рекурсия
+
+В императивных языках повторение реализуется через циклы `for` и `while`. В Haskell циклов нет — вместо них **рекурсия**: функция вызывает саму себя.
+
+### Факториал
 
 ```haskell
-gcd :: Int -> Int -> Int
-gcd n 0 = n
-gcd 0 m = m
-gcd n m
-  | n > m     = gcd (n - m) m
-  | otherwise = gcd n (m - n)
+factorial :: Int -> Int
+factorial 0 = 1                    -- базовый случай
+factorial n = n * factorial (n - 1) -- рекурсивный случай
 ```
 
-## Выражение `case`
+Каждая рекурсивная функция состоит из двух частей:
 
-Pattern matching можно использовать не только в определениях функций, но и в выражениях `case`:
-
-```haskell
-describe :: [a] -> String
-describe xs = case xs of
-  []     -> "пустой"
-  [_]    -> "один элемент"
-  [_,_]  -> "два элемента"
-  _      -> "много элементов"
-```
-
-Конструкция `case expr of` проверяет `expr` по набору образцов. Это полезно, когда паттерн-матчинг нужен в середине вычисления, а не только в аргументах функции.
-
-### `let` и `where`
-
-Вспомогательные определения можно вводить двумя способами:
-
-**`where`** — определения после основного тела:
-
-```haskell
-circleArea :: Double -> Double
-circleArea r = pi * r2
-  where
-    r2 = r * r
-```
-
-**`let ... in`** — определения перед выражением:
-
-```haskell
-circleArea :: Double -> Double
-circleArea r =
-  let r2 = r * r
-  in  pi * r2
-```
-
-Оба варианта эквивалентны. `where` чаще встречается в определениях функций, `let` — внутри выражений.
-
-## Алгебраические типы данных
-
-**Алгебраические типы данных** (АТД) — это типы с несколькими конструкторами. Каждый конструктор может нести произвольные данные.
-
-### Тип-сумма
-
-Значение может быть одним из нескольких вариантов:
-
-```haskell
-data Shape
-  = Circle Point Double           -- центр, радиус
-  | Rectangle Point Double Double -- угол, ширина, высота
-  | Line Point Point              -- начало, конец
-  | Text Point String             -- позиция, текст
-  deriving (Show, Eq)
-```
-
-`Shape` — **тип-сумма**: значение `Shape` — это *или* `Circle`, *или* `Rectangle`, *или* `Line`, *или* `Text`. Конструкторы разделяются символом `|`.
-
-### Тип-произведение
-
-Каждый конструктор — это **тип-произведение**: он объединяет несколько значений. `Circle Point Double` содержит *и* точку, *и* число.
-
-### Рекурсивные типы
-
-АТД могут ссылаться на себя:
-
-```haskell
-data List a = Nil | Cons a (List a)
-```
-
-Встроенные списки `[a]` — это именно такой тип: `[]` аналогично `Nil`, а `(:)` аналогично `Cons`.
-
-### Тип `Point`
-
-Для нашего проекта определим точку без записей — с позиционными аргументами:
-
-```haskell
-data Point = Point Double Double
-  deriving (Show, Eq)
-
-origin :: Point
-origin = Point 0.0 0.0
-```
-
-Это делает паттерн-матчинг наглядным:
+1. **Базовый случай** — условие остановки (здесь `n == 0`).
+2. **Рекурсивный случай** — вызов самой себя с «уменьшённым» аргументом.
 
 ```text
-> let p = Point 3.0 4.0
-> case p of Point x y -> x + y
-7.0
+> factorial 5
+120
+
+> -- Развернём: 5 * 4 * 3 * 2 * 1 * factorial 0 = 5 * 4 * 3 * 2 * 1 * 1 = 120
 ```
 
-## Использование АТД
+```admonish tip title="Знакомый аналог"
+**Python:** рекурсия работает так же, но ограничена глубиной стека (`RecursionError`).
+**JavaScript:** аналогично, но без оптимизации хвостовой рекурсии в большинстве движков.
+В Haskell рекурсия — основной механизм итерации, и компилятор умеет оптимизировать хвостовые вызовы.
+```
 
-Единственный способ «заглянуть» внутрь АТД — сопоставление с образцом. Напишем функцию `showShape`:
+### Числа Фибоначчи
 
 ```haskell
-showShape :: Shape -> String
-showShape (Circle c r)      = "Circle [center: " <> showPoint c <> ", radius: " <> show r <> "]"
-showShape (Rectangle p w h) = "Rectangle [" <> showPoint p <> ", " <> show w <> " × " <> show h <> "]"
-showShape (Line start end)  = "Line [" <> showPoint start <> " → " <> showPoint end <> "]"
-showShape (Text p s)        = "Text [" <> showPoint p <> ": " <> show s <> "]"
+fib :: Int -> Int
+fib 0 = 0
+fib 1 = 1
+fib n = fib (n - 1) + fib (n - 2)
 ```
-
-Каждый конструктор `Shape` обрабатывается своей альтернативой. Компилятор GHC предупредит (с флагом `-Wall`), если вы забудете обработать какой-либо конструктор — это **проверка полноты** (exhaustiveness checking).
-
-## Неполное сопоставление и тотальные функции
-
-Функция называется **тотальной**, если она возвращает результат для любого входа, и **частичной**, если может упасть. Например, `head :: [a] -> a` — частичная (падает на пустом списке).
-
-GHC предупреждает о неполном сопоставлении:
 
 ```text
-Pattern match(es) are non-exhaustive
-In an equation for 'showShape':
-    Patterns not matched: Text _ _
+> map fib [0..10]
+[0,1,1,2,3,5,8,13,21,34,55]
 ```
 
-Хорошая практика — всегда определять тотальные функции. Если результат может отсутствовать, используйте `Maybe`:
+Эта реализация экспоненциально медленная (каждый вызов порождает два), но для понимания рекурсии она идеальна.
+
+## Рекурсия на списках
+
+Списки в Haskell — рекурсивная структура: список либо пуст (`[]`), либо состоит из головы и хвоста (`x : xs`). Это делает рекурсию на списках естественной.
+
+### Длина списка
 
 ```haskell
-head' :: [a] -> Maybe a
-head' []    = Nothing
-head' (x:_) = Just x
+length' :: [a] -> Int
+length' []       = 0              -- пустой список: длина 0
+length' (_ : xs) = 1 + length' xs -- голова + рекурсия по хвосту
 ```
 
-## `newtype`
+Символ `_` означает «значение нам не важно» — мы не используем голову, только считаем элементы.
 
-`newtype` создаёт новый тип с одним конструктором и одним полем. В отличие от `data`, `newtype` не несёт рантайм-накладных расходов — значение хранится так же, как базовый тип:
+### Разворот списка
 
 ```haskell
-newtype Volt = Volt Double
-newtype Amp  = Amp Double
-newtype Ohm  = Ohm Double
-
-calculateCurrent :: Volt -> Ohm -> Amp
-calculateCurrent (Volt v) (Ohm r) = Amp (v / r)
+reverse' :: [a] -> [a]
+reverse' []       = []
+reverse' (x : xs) = reverse' xs ++ [x]
 ```
 
-Система типов не позволит случайно перепутать вольты и омы:
+Оператор `++` конкатенирует два списка. Эта реализация работает за O(n^2). Позже мы увидим, как свёртка решает проблему за O(n).
+
+### Сумма элементов
 
 ```haskell
-battery :: Volt
-battery = Volt 1.5
-
-resistor :: Ohm
-resistor = Ohm 500.0
-
--- calculateCurrent resistor battery  -- ошибка компиляции!
--- ожидается Volt, получено Ohm
+sum' :: Num a => [a] -> a
+sum' []       = 0
+sum' (x : xs) = x + sum' xs
 ```
 
-`newtype` — мощный инструмент для повышения типобезопасности без рантайм-расходов.
+Паттерн повторяется: базовый случай для `[]`, рекурсивный случай для `x : xs`. Именно этот паттерн обобщают свёртки.
 
-## Smart Constructors и «Parse, Don't Validate»
+## `map` — преобразование списка
 
-### Зачем скрывать конструкторы
-
-`newtype Volt = Volt Double` защищает от путаницы *типов*, но не от некорректных *значений*. Ничто не мешает написать `Volt (-100)` — бессмысленное отрицательное напряжение.
-
-**Smart constructor** — паттерн, при котором конструктор типа скрыт от пользователя, а создание значений проходит через функцию-валидатор:
+Функция `map` применяет функцию к каждому элементу:
 
 ```haskell
-module Domain.Email
-  ( Email          -- тип экспортируется
-  , mkEmail        -- smart constructor экспортируется
-  , unEmail        -- accessor экспортируется
-  -- Email(..) НЕ экспортируется — конструктор скрыт!
-  ) where
-
-newtype Email = Email String deriving (Show, Eq)
-
-unEmail :: Email -> String
-unEmail (Email e) = e
-
-mkEmail :: String -> Either String Email
-mkEmail raw
-  | null raw          = Left "Email не может быть пустым"
-  | '@' `notElem` raw = Left "Email должен содержать '@'"
-  | otherwise         = Right (Email raw)
+map :: (a -> b) -> [a] -> [b]
+map _ []       = []
+map f (x : xs) = f x : map f xs
 ```
 
-Теперь создать `Email` можно *только* через `mkEmail`, который проверяет инварианты. Код за пределами модуля `Domain.Email` не имеет доступа к конструктору `Email` напрямую.
+```text
+> map (* 2) [1, 2, 3]
+[2, 4, 6]
 
-```admonish tip title="Правило буравчика"
-Если тип имеет инвариант (email содержит `@`, возраст неотрицателен, список непуст) —
-конструктор должен быть скрыт. Экспортируйте только smart constructor.
+> map taskTitle tasks
+["Изучить Haskell","Купить молоко","Написать тесты"]
 ```
 
-```admonish info title="Знакомый аналог"
-**TypeScript:** `private constructor` + `static create()` в классах.
-Но в TS нельзя *запретить* `new Email("invalid")` извне модуля так же надёжно,
-как в Haskell — не экспортировать конструктор.
-Библиотека [Zod](https://zod.dev/) реализует «parse, don't validate» в runtime.
+`map` сохраняет структуру списка — длина результата всегда равна длине исходного.
 
-**Python:** `__init__` + `@classmethod` factory. Нет enforcement на уровне типов.
-[Pydantic](https://docs.pydantic.dev/) — аналог подхода, но только в runtime.
+```admonish tip title="Знакомый аналог"
+**JavaScript:** `[1, 2, 3].map(x => x * 2)`.
+**Python:** `[x * 2 for x in [1, 2, 3]]`.
+В Haskell `map` — обычная функция, а не метод.
 ```
 
-### Parse, Don't Validate
+## `filter` — отбор элементов
 
-Alexis King (2019) сформулировала важный принцип: **парсинг** и **валидация** — разные вещи.
-
-- **Валидация** проверяет данные, но результат имеет *тот же тип*: `String -> Bool`. Информация о прохождении проверки теряется — ничто не мешает использовать невалидированную строку.
-- **Парсинг** преобразует данные в *новый тип*: `String -> Either Error Email`. Тип `Email` *несёт доказательство* пройденной валидации. После парсинга повторная проверка не нужна.
+Функция `filter` оставляет только элементы, удовлетворяющие предикату:
 
 ```haskell
--- Валидация: информация теряется
-validateEmail :: String -> Bool
-validateEmail s = '@' `elem` s  -- результат Bool — не помогает type checker'у
-
--- Парсинг: информация сохраняется в типе
-parseEmail :: String -> Either String Email
-parseEmail = mkEmail  -- результат Email — гарантия пройденной проверки
+filter :: (a -> Bool) -> [a] -> [a]
+filter _ []       = []
+filter p (x : xs)
+  | p x       = x : filter p xs
+  | otherwise  = filter p xs
 ```
 
-Smart constructors — это именно «parse, don't validate» в действии.
+```text
+> filter even [1..10]
+[2,4,6,8,10]
 
-### Newtypes для семантической защиты
+> filter (\t -> taskPriority t == High) tasks
+[Task {taskTitle = "Изучить Haskell", ...}]
+```
 
-`newtype` защищает не только от опечаток, но и от **семантического дрифта** — ситуации, когда одинаковый тип означает разные вещи в разных контекстах:
+Комбинация `map` и `filter` покрывает огромную долю задач обработки списков:
 
 ```haskell
--- БЕЗ newtypes — тихая ошибка при смене единиц
-processPayment :: Int -> IO ()  -- центы? доллары? неизвестно
-
--- С newtypes — несовместимость видна на уровне типов
-newtype Cents   = Cents   { unCents   :: Int } deriving (Show, Eq)
-newtype Dollars = Dollars { unDollars :: Int } deriving (Show, Eq)
-
-processPayment :: Cents -> IO ()
-processPayment (Cents amount) = putStrLn $ "Списано: " <> show amount <> " центов"
-
--- Конвертация — явная, не случайная:
-toCents :: Dollars -> Cents
-toCents (Dollars d) = Cents (d * 100)
+-- Заголовки всех выполненных задач
+doneTitles :: TaskList -> [String]
+doneTitles = map taskTitle . filter (\t -> taskStatus t == Done)
 ```
 
-```admonish warning title="Границы программы ≠ границы системы"
-Smart constructors и «Parse, Don't Validate» гарантируют инварианты *внутри одного
-запущенного процесса*. Но при сериализации (JSON, Kafka, БД) данные пересекают границу
-версий: старый воркер не знает о новом конструкторе `Refunded`, а `amount :: Int` может
-означать центы в v1 и доллары в v2 (семантический дрифт).
+## `foldr` — правая свёртка
 
-Решения: schema registries, versioned serialization (protobuf field numbers),
-expand-and-contract миграции. Подробнее — в главе 18.
-```
-
-## Ограничивающий прямоугольник
-
-В модуле `Data.Picture` определена функция `bounds`, которая вычисляет минимальный ограничивающий прямоугольник для картинки. Она использует все изученные приёмы:
+`map` и `filter` — частные случаи более общей операции: **свёртки** (fold). Свёртка «сворачивает» список в одно значение, последовательно применяя функцию.
 
 ```haskell
-data Bounds = Bounds
-  { minX :: Double, minY :: Double
-  , maxX :: Double, maxY :: Double
+foldr :: (a -> b -> b) -> b -> [a] -> b
+foldr _ acc []       = acc
+foldr f acc (x : xs) = f x (foldr f acc xs)
+```
+
+Три аргумента: `f` — функция (элемент, накопитель -> результат), `acc` — начальное значение, и список.
+
+### Как работает `foldr`
+
+`foldr` заменяет каждый `:` на `f`, а `[]` на `acc`:
+
+```text
+foldr f acc (1 : 2 : 3 : [])
+= f 1 (f 2 (f 3 acc))
+```
+
+Вычисление идёт **справа налево** — отсюда название `foldr` (fold right).
+
+### Примеры через `foldr`
+
+```haskell
+sum'' :: Num a => [a] -> a
+sum'' = foldr (+) 0          -- заменяем (:) на (+), [] на 0
+
+product' :: Num a => [a] -> a
+product' = foldr (*) 1       -- заменяем (:) на (*), [] на 1
+
+concat' :: [[a]] -> [a]
+concat' = foldr (++) []      -- заменяем (:) на (++), [] на []
+```
+
+### `map` и `filter` через `foldr`
+
+Любую рекурсию по списку можно выразить через `foldr`:
+
+```haskell
+map' :: (a -> b) -> [a] -> [b]
+map' f = foldr (\x acc -> f x : acc) []
+
+filter' :: (a -> Bool) -> [a] -> [a]
+filter' p = foldr (\x acc -> if p x then x : acc else acc) []
+```
+
+## `foldl'` — строгая левая свёртка
+
+**Левая** свёртка обрабатывает список слева направо:
+
+```haskell
+foldl' :: (b -> a -> b) -> b -> [a] -> b
+foldl' _ acc []       = acc
+foldl' f acc (x : xs) = let acc' = f acc x
+                         in acc' `seq` foldl' f acc' xs
+```
+
+```text
+foldl' f acc [1, 2, 3]
+= foldl' f (f acc 1) [2, 3]
+= foldl' f (f (f acc 1) 2) [3]
+= f (f (f acc 1) 2) 3
+```
+
+Аргументы `f` в `foldl'` идут в другом порядке: сначала аккумулятор, потом элемент.
+
+````admonish warning title="foldl vs foldl'"
+В Haskell существует также `foldl` (без апострофа) — **ленивая** левая свёртка. Она накапливает цепочку отложенных вычислений и может вызвать переполнение стека на длинных списках:
+
+```text
+foldl (+) 0 [1..1_000_000]  -- может упасть с переполнением стека!
+foldl' (+) 0 [1..1_000_000] -- работает в константной памяти
+```
+
+**Правило:** всегда используйте `foldl'` из `Data.List` вместо `foldl`. Подробнее о ленивости и строгости — в [главе 9](chapter09.md).
+
+```haskell
+import Data.List (foldl')
+```
+````
+
+### Когда `foldr`, когда `foldl'`?
+
+- **`foldr`** — когда результат строится «лениво» (списки, строки) или операция может завершиться досрочно.
+- **`foldl'`** — когда результат — одно строгое значение (число, запись-аккумулятор).
+
+```haskell
+-- foldl': эффективный разворот списка за O(n)
+reverse'' :: [a] -> [a]
+reverse'' = foldl' (flip (:)) []
+
+-- foldl': вычисляем число
+length'' :: [a] -> Int
+length'' = foldl' (\acc _ -> acc + 1) 0
+```
+
+## Практические функции для списков
+
+### `zip` и `zipWith`
+
+`zip` объединяет два списка в список пар. `zipWith` обобщает `zip`, применяя функцию:
+
+```text
+> zip [1, 2, 3] ["a", "b", "c"]
+[(1,"a"),(2,"b"),(3,"c")]
+
+> zipWith (+) [1, 2, 3] [10, 20, 30]
+[11,22,33]
+
+> zipWith (\i t -> show i <> ". " <> taskTitle t) [1..] tasks
+["1. Изучить Haskell","2. Купить молоко","3. Написать тесты"]
+```
+
+Обратите внимание: `[1..]` — бесконечный список. Благодаря ленивости Haskell вычислит ровно столько элементов, сколько нужно.
+
+### `take`, `drop`, `span`, `break`
+
+```text
+> take 3 [1..10]
+[1,2,3]
+
+> drop 3 [1..10]
+[4,5,6,7,8,9,10]
+
+> span (< 4) [1, 2, 3, 5, 1, 2]
+([1,2,3],[5,1,2])
+
+> break (>= 4) [1, 2, 3, 5, 1, 2]  -- эквивалентно span (< 4)
+([1,2,3],[5,1,2])
+```
+
+### Шпаргалка
+
+| Функция | Тип | Описание |
+|---------|-----|----------|
+| `map` | `(a -> b) -> [a] -> [b]` | Преобразование элементов |
+| `filter` | `(a -> Bool) -> [a] -> [a]` | Отбор по предикату |
+| `foldr` | `(a -> b -> b) -> b -> [a] -> b` | Правая свёртка |
+| `foldl'` | `(b -> a -> b) -> b -> [a] -> b` | Строгая левая свёртка |
+| `zip` | `[a] -> [b] -> [(a, b)]` | Объединение в пары |
+| `zipWith` | `(a -> b -> c) -> [a] -> [b] -> [c]` | Объединение с функцией |
+| `take` / `drop` | `Int -> [a] -> [a]` | Первые n / без первых n |
+| `span` / `break` | `(a -> Bool) -> [a] -> ([a], [a])` | Разбиение списка |
+| `any` / `all` | `(a -> Bool) -> [a] -> Bool` | Есть ли / все ли |
+
+## Проект: статистика и сортировка задач
+
+Применим свёртки к нашему трекеру задач.
+
+### Статистика в один проход
+
+Определим тип для статистики:
+
+```haskell
+data TaskStats = TaskStats
+  { totalTasks   :: Int
+  , todoCount    :: Int
+  , doneCount    :: Int
+  , highPriority :: Int
   } deriving (Show, Eq)
-
-shapeBounds :: Shape -> Bounds
-shapeBounds (Circle (Point cx cy) r) = Bounds
-  { minX = cx - r, minY = cy - r
-  , maxX = cx + r, maxY = cy + r }
-shapeBounds (Rectangle (Point x y) w h) = Bounds
-  { minX = x, minY = y
-  , maxX = x + w, maxY = y + h }
-shapeBounds (Line (Point x1 y1) (Point x2 y2)) = Bounds
-  { minX = min x1 x2, minY = min y1 y2
-  , maxX = max x1 x2, maxY = max y1 y2 }
-shapeBounds (Text (Point x y) _) = Bounds
-  { minX = x, minY = y, maxX = x, maxY = y }
 ```
 
-Обратите внимание на **вложенные образцы**: `Circle (Point cx cy) r` разбирает и `Circle`, и вложенный `Point` за одно сопоставление.
-
-Функция `bounds` использует свёртку (о ней подробно — в следующей главе) для объединения границ всех фигур:
+Наивный подход — пройти список четыре раза:
 
 ```haskell
-bounds :: Picture -> Bounds
-bounds = foldl combine emptyBounds
-  where
-    combine acc shape = unionBounds acc (shapeBounds shape)
+-- Неэффективно: четыре прохода по списку
+computeStatsNaive :: TaskList -> TaskStats
+computeStatsNaive ts = TaskStats
+  { totalTasks   = length ts
+  , todoCount    = length (filter (\t -> taskStatus t == Todo) ts)
+  , doneCount    = length (filter (\t -> taskStatus t == Done) ts)
+  , highPriority = length (filter (\t -> taskPriority t == High) ts)
+  }
 ```
 
-Проверим в GHCi:
+Лучше — собрать всё за **один проход** с помощью `foldl'`:
+
+```haskell
+import Data.List (foldl')
+
+computeStats :: TaskList -> TaskStats
+computeStats = foldl' step emptyStats
+  where
+    emptyStats = TaskStats 0 0 0 0
+
+    step acc task = TaskStats
+      { totalTasks   = totalTasks acc + 1
+      , todoCount    = todoCount acc + if taskStatus task == Todo then 1 else 0
+      , doneCount    = doneCount acc + if taskStatus task == Done then 1 else 0
+      , highPriority = highPriority acc + if taskPriority task == High then 1 else 0
+      }
+```
 
 ```text
-> import Data.Picture
-> let pic = [Circle origin 1, Rectangle (Point 2 2) 3 3]
-> bounds pic
-Bounds {minX = -1.0, minY = -1.0, maxX = 5.0, maxY = 5.0}
+> let tasks = [Task "Haskell" "" High Todo, Task "Молоко" "" Low Done, Task "Тесты" "" High InProgress]
+> computeStats tasks
+TaskStats {totalTasks = 3, todoCount = 1, doneCount = 1, highPriority = 2}
 ```
 
-## `LambdaCase`
+Здесь `foldl'` вместо `foldr`, потому что мы вычисляем строгое значение (`TaskStats`), а не строим ленивую структуру.
 
-Расширение `LambdaCase` (включённое в нашем проекте) позволяет записывать анонимные функции с паттерн-матчингом:
+### Сортировка вставками
+
+Реализуем сортировку по приоритету с помощью `foldr` и вспомогательной рекурсивной функции:
 
 ```haskell
-describe :: Maybe Int -> String
-describe = \case
-  Nothing -> "пусто"
-  Just n  -> "значение: " <> show n
+-- Вставка задачи в отсортированный список
+insertByPriority :: Task -> TaskList -> TaskList
+insertByPriority task [] = [task]
+insertByPriority task (t : ts)
+  | taskPriority task >= taskPriority t = task : t : ts
+  | otherwise                           = t : insertByPriority task ts
+
+-- Сортировка: от высокого приоритета к низкому
+sortByPriority :: TaskList -> TaskList
+sortByPriority = foldr insertByPriority []
 ```
 
-Это сокращение для `\x -> case x of ...`. Удобно при передаче функций в `map`, `filter` и другие функции высшего порядка:
+`sortByPriority` — это `foldr`, где функцией свёртки выступает `insertByPriority`. Каждый элемент вставляется в нужное место уже отсортированного хвоста.
+
+````admonish note title="О производительности"
+Сортировка вставками работает за O(n^2). Для реальных проектов используйте `sortBy` из `Data.List`:
 
 ```haskell
-> map (\case { Nothing -> 0; Just n -> n }) [Just 1, Nothing, Just 3]
-[1, 0, 3]
+import Data.List (sortBy)
+import Data.Ord (comparing, Down(..))
+
+sortByPriority' :: TaskList -> TaskList
+sortByPriority' = sortBy (comparing (Down . taskPriority))
+```
+
+Наша реализация — учебная: она демонстрирует, как рекурсия и свёртки работают вместе.
+````
+
+### Группировка по статусу
+
+Сгруппируем задачи по статусу:
+
+```haskell
+groupByStatus :: TaskList -> [(Status, [Task])]
+groupByStatus tasks =
+  [ (s, filter (\t -> taskStatus t == s) tasks)
+  | s <- [Todo, InProgress, Done]
+  ]
+```
+
+```text
+> map (\(s, ts) -> (s, length ts)) (groupByStatus tasks)
+[(Todo,1),(InProgress,1),(Done,1)]
 ```
 
 ## Упражнения
 
 Решения пишите в `test/MySolutions.hs`. Проверяйте: `stack test`.
 
-1. **(Среднее)** Реализуйте функцию `area`, которая вычисляет площадь фигуры. Площадь линии и текста считается нулевой.
+### Проект ★☆☆
+
+1. Реализуйте функцию `computeStats`, которая вычисляет `TaskStats` за один проход по списку задач. Используйте `foldl'`.
 
     ```haskell
-    area :: Shape -> Double
+    computeStats :: TaskList -> TaskStats
     ```
 
-    *Подсказка:* используйте сопоставление с образцом по каждому конструктору `Shape`. Площадь круга: \\(\pi r^2\\). Площадь прямоугольника: \\(w \times h\\). Константа `pi` доступна из `Prelude`.
-
-2. **(Среднее)** Реализуйте функцию `scale`, которая масштабирует фигуру на заданный коэффициент. Координаты и размеры умножаются на коэффициент, текст не масштабируется (только его позиция).
+2. Реализуйте функцию `completionRate`, которая возвращает долю выполненных задач (от 0.0 до 1.0). Для пустого списка верните 0.0.
 
     ```haskell
-    scale :: Double -> Shape -> Shape
+    completionRate :: TaskList -> Double
     ```
 
-    *Подсказка:* для каждого конструктора создайте новое значение того же конструктора с умножёнными координатами. Используйте вложенные образцы для `Point`.
+    *Подсказка:* используйте `computeStats` и `fromIntegral` для преобразования `Int` в `Double`.
 
-3. **(Среднее)** Реализуйте функцию `shapeText`, которая извлекает текст из фигуры `Text`. Для остальных фигур верните `Nothing`.
+### Проект ★★☆
+
+3. Реализуйте функцию `sortByPriority`, которая сортирует задачи от высокого приоритета к низкому. Используйте `foldr` и вспомогательную функцию `insertByPriority`.
 
     ```haskell
-    shapeText :: Shape -> Maybe String
+    sortByPriority :: TaskList -> TaskList
     ```
 
-    *Подсказка:* один образец для `Text`, один wildcard для всего остального.
+### Практика ★☆☆
+
+4. Реализуйте функцию `myReverse`, которая разворачивает список. Используйте `foldl'`.
+
+    ```haskell
+    myReverse :: [a] -> [a]
+    ```
+
+    *Подсказка:* `foldl' (\acc x -> ...) [] xs`.
+
+5. Реализуйте функцию `myMap`, которая работает как стандартный `map`, но определена через `foldr`.
+
+    ```haskell
+    myMap :: (a -> b) -> [a] -> [b]
+    ```
+
+### Практика ★★☆
+
+6. Реализуйте функцию `frequencies`, которая подсчитывает, сколько раз каждый элемент встречается в списке. Результат — список пар `(элемент, количество)`.
+
+    ```haskell
+    frequencies :: Eq a => [a] -> [(a, Int)]
+    ```
+
+    ```text
+    > frequencies [1, 2, 1, 3, 2, 1]
+    [(1,3),(2,2),(3,1)]
+    ```
+
+    *Подсказка:* используйте `foldl'` и вспомогательную функцию для обновления списка пар.
+
+7. Реализуйте функцию `chunksOf`, которая разбивает список на подсписки заданной длины:
+
+    ```haskell
+    chunksOf :: Int -> [a] -> [[a]]
+    ```
+
+    ```text
+    > chunksOf 3 [1..10]
+    [[1,2,3],[4,5,6],[7,8,9],[10]]
+    ```
+
+    *Подсказка:* используйте `splitAt` или комбинацию `take`/`drop` с рекурсией.
 
 ## Заключение
 
-В этой главе мы:
+Рекурсия, `map`, `filter` и свёртки (`foldr`, `foldl'`) — фундамент обработки данных в Haskell. Через `foldr` выражаются `map`, `filter`, `length`, `reverse` и многие другие функции; `foldl'` безопаснее ленивого `foldl` для строгих вычислений (подробнее — в [главе 9](chapter09.md)). Мы применили эти инструменты к трекеру задач: собрали статистику за один проход, отсортировали по приоритету и сгруппировали по статусу.
 
-- Познакомились с алгебраическими типами данных: суммами, произведениями и рекурсивными типами.
-- Освоили сопоставление с образцом: литералы, переменные, wildcards, конструкторы, вложенные и именованные образцы.
-- Разобрали guards, `case`, `let` и `where`.
-- Узнали о `newtype` и его использовании для типобезопасности.
-- Познакомились с паттернами Smart Constructor и «Parse, Don't Validate».
-- Создали библиотеку геометрических фигур с вычислением ограничивающего прямоугольника.
+В [следующей главе](chapter05.md) мы познакомимся с классами типов — механизмом, который позволяет одной и той же функции работать с разными типами данных.
 
-АТД и паттерн-матчинг — одни из самых мощных и часто используемых инструментов в Haskell. В оставшейся части книги мы будем активно их применять.
+```admonish tip title="Для углубления"
+- **Haskell MOOC** — [haskell.mooc.fi](https://haskell.mooc.fi/), лекция 3: рекурсия, списки и свёртки.
+- **MetaLamp** — [education.metalamp.ru](https://education.metalamp.ru/education/haskell/task-1), задание 3: работа со списками.
+```

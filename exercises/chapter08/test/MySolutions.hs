@@ -1,114 +1,119 @@
 module MySolutions where
 
+import Data.Char (toLower)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Control.Monad.Writer
 
-import Data.Phonebook (Phonebook)
-import Data.Chess (KnightPos, moveKnight)
+import TaskTracker
 
 -- ============================================================
--- Упражнение 1: Безопасный поиск в телефонной книге
+-- Упражнение 1: Безопасное удаление задачи
 --
--- Реализуйте функцию safeLookup, которая ищет телефон
--- по городу и имени во вложенной Map.
---
--- Используйте >>= (не case и не do).
+-- Удалите задачу по идентификатору. Если задачи нет —
+-- верните Left (TaskNotFound tid).
 -- ============================================================
 
--- | Поиск телефона по городу и имени.
---
--- >>> safeLookup "Москва" "Алиса" exampleBook
--- Just "+7-495-111-1111"
---
--- >>> safeLookup "Москва" "Неизвестный" exampleBook
--- Nothing
-safeLookup :: String -> String -> Phonebook -> Maybe String
-safeLookup = undefined
+{- | Удаление задачи из хранилища.
+
+>>> deleteTaskSafe (TaskId 1) exampleStore
+Right (TaskStore ...)
+
+>>> deleteTaskSafe (TaskId 99) exampleStore
+Left (TaskNotFound (TaskId 99))
+-}
+deleteTaskSafe :: TaskId -> TaskStore -> Either AppError TaskStore
+deleteTaskSafe = undefined
 
 -- ============================================================
--- Упражнение 2: Безопасная индексация и цепочка
+-- Упражнение 2: Обновление названия задачи
 --
--- Реализуйте safeIndex и safeHead, затем используйте
--- их для thirdElement — извлечения третьего элемента
--- из первого подсписка.
+-- Обновите название задачи по идентификатору.
+-- Проверки:
+--   1. Название не должно быть пустым → Left (InvalidInput "Пустое название")
+--   2. Задача должна существовать    → Left (TaskNotFound tid)
 -- ============================================================
 
--- | Безопасный доступ по индексу (0-based).
---
--- >>> safeIndex [10, 20, 30] 1
--- Just 20
---
--- >>> safeIndex [10, 20, 30] 5
--- Nothing
-safeIndex :: [a] -> Int -> Maybe a
-safeIndex = undefined
+{- | Обновление названия задачи.
 
--- | Безопасная голова списка.
---
--- >>> safeHead [1, 2, 3]
--- Just 1
---
--- >>> safeHead ([] :: [Int])
--- Nothing
-safeHead :: [a] -> Maybe a
-safeHead = undefined
+>>> updateTitle (TaskId 1) "Купить хлеб" exampleStore
+Right (TaskStore ...)
 
--- | Третий элемент (индекс 2) первого подсписка.
---
--- >>> thirdElement [[10, 20, 30, 40], [50, 60]]
--- Just 30
---
--- >>> thirdElement [[10, 20], [50, 60]]
--- Nothing
---
--- >>> thirdElement ([] :: [[Int]])
--- Nothing
-thirdElement :: [[a]] -> Maybe a
-thirdElement = undefined
+>>> updateTitle (TaskId 1) "" exampleStore
+Left (InvalidInput "Пустое название")
+
+>>> updateTitle (TaskId 99) "Тест" exampleStore
+Left (TaskNotFound (TaskId 99))
+-}
+updateTitle :: TaskId -> String -> TaskStore -> Either AppError TaskStore
+updateTitle = undefined
 
 -- ============================================================
--- Упражнение 3: Ходы шахматного коня
+-- Упражнение 3: Безопасное деление
 --
--- Модуль Data.Chess определяет тип KnightPos = (Int, Int)
--- и функцию moveKnight :: KnightPos -> [KnightPos],
--- возвращающую все допустимые ходы коня на доске 8×8.
---
--- Реализуйте canReachIn — проверку, может ли конь добраться
--- из одной позиции в другую за ровно n ходов.
---
--- Подсказка: используйте >>= с moveKnight для генерации
--- всех позиций после n ходов, затем проверьте elem.
+-- Целочисленное деление с проверкой на ноль.
+-- При делении на ноль верните Left "Деление на ноль".
 -- ============================================================
 
--- | Проверяет, может ли конь достичь цели за ровно n ходов.
---
--- >>> canReachIn 3 (6,2) (6,1)
--- True
---
--- >>> canReachIn 3 (6,2) (7,3)
--- False
-canReachIn :: Int -> KnightPos -> KnightPos -> Bool
-canReachIn = undefined
+{- | Безопасное целочисленное деление.
+
+>>> safeDiv 10 3
+Right 3
+
+>>> safeDiv 10 0
+Left "Деление на ноль"
+-}
+safeDiv :: Int -> Int -> Either String Int
+safeDiv = undefined
 
 -- ============================================================
--- Упражнение 4 (продвинутое): Логирование через Writer
+-- Упражнение 4: Парсинг приоритета
 --
--- Реализуйте collatzLog — вычисление последовательности
--- Коллатца с логированием каждого шага.
+-- Преобразуйте строку в значение Priority.
+-- Регистронезависимый: "low" → Low, "medium" → Medium, "high" → High.
+-- Иначе: Left "Неизвестный приоритет: X"
 --
--- Правила:
---   n чётное    → n / 2
---   n нечётное  → 3n + 1
--- Останавливаемся при n = 1.
---
--- Каждый шаг записывается в лог через tell.
--- Возвращается количество шагов.
+-- Подсказка: используйте map toLower из Data.Char.
 -- ============================================================
 
--- | Последовательность Коллатца с логированием.
+{- | Парсинг приоритета из строки.
+
+>>> parsePriority "high"
+Right High
+
+>>> parsePriority "LOW"
+Right Low
+
+>>> parsePriority "urgent"
+Left "Неизвестный приоритет: urgent"
+-}
+parsePriority :: String -> Either String Priority
+parsePriority = undefined
+
+-- ============================================================
+-- Упражнение 5: Цепочка операций
 --
--- >>> runWriter (collatzLog 6)
--- (8,["6 → 3","3 → 10","10 → 5","5 → 16","16 → 8","8 → 4","4 → 2","2 → 1"])
-collatzLog :: Int -> Writer [String] Int
-collatzLog = undefined
+-- Примените список операций последовательно к хранилищу.
+-- Остановитесь на первой ошибке.
+--
+-- Подсказка: используйте foldl с >>= или foldM.
+-- ============================================================
+
+{- | Последовательное применение операций.
+
+>>> let ops = [Right . addTask (TaskId 4) (Task "Новая" Low Todo)]
+>>> chainOperations ops emptyStore
+Right (TaskStore ...)
+-}
+chainOperations ::
+  [TaskStore -> Either AppError TaskStore] -> TaskStore -> Either AppError TaskStore
+chainOperations = undefined
+
+-- ============================================================
+-- Бонус (не тестируется): loadTasksFromFile
+--
+-- Загрузка задач из файла. Это IO-упражнение.
+-- Прочитайте файл, распарсите строки, верните Either AppError TaskStore.
+-- ============================================================
+
+-- loadTasksFromFile :: FilePath -> IO (Either AppError TaskStore)
+-- loadTasksFromFile = undefined

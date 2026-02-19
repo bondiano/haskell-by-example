@@ -6,13 +6,13 @@ cabal-version: 1.12
 
 name:           chapter17
 version:        0.1.0.0
-synopsis:       Haskell by Example — Глава 17: Линзы и оптики
+synopsis:       Haskell by Example — Глава 17: Веб-приложение с БД (Scotty + persistent)
 license:        MIT
 build-type:     Simple
 
 library
   exposed-modules:
-      Data.Company
+      TaskTracker
   other-modules:
       Paths_chapter17
   hs-source-dirs:
@@ -33,11 +33,11 @@ library
       TupleSections
       NumericUnderscores
       ImportQualifiedPost
-      TemplateHaskell
-      RankNTypes
   build-depends:
-      base >=4.18 && <5
-    , lens
+      aeson
+    , base >=4.18 && <5
+    , containers
+    , text
   default-language: Haskell2010
 
 test-suite chapter17-tests
@@ -64,11 +64,11 @@ test-suite chapter17-tests
       TupleSections
       NumericUnderscores
       ImportQualifiedPost
-      TemplateHaskell
-      RankNTypes
   build-depends:
-      base >=4.18 && <5
+      aeson
+    , base >=4.18 && <5
     , chapter17
+    , containers
     , hspec
-    , lens
+    , text
   default-language: Haskell2010

@@ -1,544 +1,436 @@
-# Предметно-ориентированные языки
+# Организация проекта
 
-## Цели главы
+Добро пожаловать в четвёртую часть книги! До сих пор мы писали код в отдельных упражнениях — один пакет, один модуль, никакой структуры. Реальные Haskell-проекты устроены иначе. Здесь мы разберём систему модулей (объявления, экспорт, импорт), научимся ограничивать видимость, освоим паттерны реэкспорта и `Internal`-модулей, поймём структуру пакета с library/executable/test и настроим базовый CI/CD. Завершим главу реструктуризацией трекера задач в модульную иерархию.
 
-В этой главе мы познакомимся с **предметно-ориентированными языками** (Domain-Specific Languages, DSL) — специализированными языками, созданными для решения задач в конкретной области. Мы построим мини-язык арифметических выражений: определим его абстрактное синтаксическое дерево, напишем парсер на **megaparsec**, реализуем вычислитель и оптимизатор. В качестве второго примера мы разберём парсинг JSON.
+## Модули Haskell
 
-## Структура проекта
-
-Откройте директорию `exercises/chapter15`:
-
-```text
-chapter15/
-├── package.yaml
-├── src/
-│   └── Language/
-│       ├── Expr.hs           ← AST арифметических выражений
-│       ├── Expr/
-│       │   └── Parser.hs     ← Megaparsec-парсер выражений
-│       └── Json.hs           ← Тип JSON-значений
-├── test/
-│   ├── Spec.hs               ← тесты
-│   └── MySolutions.hs        ← ваши решения
-└── no-peeking/
-    └── Solutions.hs           ← эталонные решения
-```
-
-Модули в `src/` предоставляют типы данных, парсер выражений и вспомогательные функции. Ваша задача — реализовать вычислитель, оптимизатор, парсер JSON и расширенный вычислитель в `MySolutions.hs`.
-
-## Что такое DSL
-
-**Предметно-ориентированный язык** (DSL) — это язык программирования, спроектированный для конкретной задачи. В отличие от языков общего назначения (Haskell, Python, Java), DSL ограничен рамками своей предметной области, но в этих рамках значительно выразительнее.
-
-Примеры DSL, которые вы уже встречали:
-
-| DSL | Область |
-|-----|---------|
-| SQL | Запросы к базам данных |
-| HTML | Структура веб-страниц |
-| CSS | Стилизация веб-страниц |
-| JSON | Обмен данными |
-| Regex | Поиск по шаблонам |
-| Make | Сборка проектов |
-
-DSL делятся на два вида:
-
-- **Внешние** (external) — имеют собственный синтаксис и парсер: SQL, HTML, JSON.
-- **Встроенные** (embedded, EDSL) — реализованы как библиотека внутри языка-хоста. Haskell особенно хорош для создания EDSL благодаря алгебраическим типам данных, классам типов, монадам и гибкому синтаксису.
-
-В этой главе мы построим **внешний DSL** — язык арифметических выражений с собственным синтаксисом и парсером, а также реализуем парсер для JSON.
-
-## Алгебраический тип данных как основа DSL
-
-Первый шаг при создании DSL — определить **абстрактное синтаксическое дерево** (AST). AST представляет структуру программы в виде дерева, где каждый узел — операция или значение.
-
-Откройте модуль `Language.Expr`:
+Каждый файл `.hs` начинается с объявления модуля:
 
 ```haskell
-data Expr
-  = Lit Double            -- числовой литерал: 42, 3.14
-  | Var String            -- переменная: x, foo
-  | Add Expr Expr         -- сложение: a + b
-  | Sub Expr Expr         -- вычитание: a - b
-  | Mul Expr Expr         -- умножение: a * b
-  | Div Expr Expr         -- деление: a / b
-  | Neg Expr              -- унарный минус: -a
-  | Let String Expr Expr  -- let-привязка: let x = e1 in e2
+module TaskTracker.Types where
+
+data Priority = Low | Medium | High
+  deriving (Show, Eq, Ord)
+```
+
+Имя модуля должно совпадать с путём к файлу: `TaskTracker.Types` живёт в `src/TaskTracker/Types.hs`. Точка соответствует разделителю директорий.
+
+```text
+src/
+├── TaskTracker/
+│   ├── Types.hs       -- module TaskTracker.Types
+│   ├── Storage.hs     -- module TaskTracker.Storage
+│   ├── Filter.hs      -- module TaskTracker.Filter
+│   └── CLI.hs         -- module TaskTracker.CLI
+└── TaskTracker.hs     -- module TaskTracker (реэкспорт)
+```
+
+Если объявление `module` отсутствует, модуль получает имя `Main` — допустимо только для исполняемых файлов.
+
+```admonish tip title="Знакомый аналог"
+**TypeScript:** каждый файл — модуль, путь = имя (`import { Task } from './TaskTracker/Types'`).
+**Python:** пакеты через каталоги с `__init__.py` (`from task_tracker.types import Task`).
+**Go:** пакеты = каталоги (`import "tasktracker/types"`).
+Haskell ближе всего к Java: имя модуля = путь к файлу.
+```
+
+## Экспорт и импорт
+
+### Экспорт
+
+По умолчанию (`module M where`) экспортируется **всё**. Чтобы ограничить видимость, перечислите имена в скобках:
+
+```haskell
+module TaskTracker.Types
+  ( Priority(..)    -- тип и ВСЕ конструкторы
+  , Status(..)
+  , Task(..)        -- тип и все поля-аксессоры
+  , TaskId
+  , mkTask
+  ) where
+```
+
+| Запись | Что экспортирует |
+|---|---|
+| `Priority(..)` | Тип и все конструкторы (`Low`, `Medium`, `High`) |
+| `Priority` | Только тип, без конструкторов (абстрактный тип) |
+| `Priority(Low, High)` | Тип и только указанные конструкторы |
+| `mkTask` | Функция `mkTask` |
+
+Экспорт без конструкторов создаёт **абстрактный тип** — основной механизм инкапсуляции:
+
+```haskell
+module TaskTracker.Types (TaskId, mkTaskId, unTaskId) where
+
+newtype TaskId = TaskId Int deriving (Show, Eq, Ord)
+
+mkTaskId :: Int -> Maybe TaskId
+mkTaskId n
+  | n > 0     = Just (TaskId n)
+  | otherwise = Nothing
+
+unTaskId :: TaskId -> Int
+unTaskId (TaskId n) = n
+```
+
+Клиентский код не может создать `TaskId` с отрицательным значением — инвариант гарантирован на уровне модуля.
+
+```admonish warning title="Не экспортируйте всё подряд"
+`module M where` (без списка экспорта) удобно при прототипировании, но в библиотечном коде всегда указывайте явный список экспорта. Это документирует API, защищает инварианты и позволяет рефакторить без риска сломать клиентов.
+```
+
+### Импорт
+
+```haskell
+import TaskTracker.Types                       -- всё из модуля
+import TaskTracker.Types (Task, Priority(..))  -- только перечисленное
+import Data.Map.Strict qualified as Map        -- квалифицированный
+import Prelude hiding (lookup)                 -- всё кроме lookup
+```
+
+С расширением `ImportQualifiedPost` (включённым в нашем проекте) `qualified` пишется *после* имени модуля — это читается естественнее и лучше группируется визуально.
+
+```admonish note title="Правила хорошего тона"
+1. Группируйте: стандартные, сторонние, внутренние модули.
+2. Квалифицируйте контейнеры: `Map`, `Set`, `Text` — через `qualified as`.
+3. Явный импорт для небольших наборов: `import Data.Maybe (fromMaybe, isJust)`.
+```
+
+## Конвенция Internal и реэкспорт
+
+### Internal-модули
+
+В Haskell нет `private`/`protected`. Вместо этого модули с суффиксом `Internal` содержат детали реализации:
+
+```haskell
+-- TaskTracker.Types.Internal: конструкторы и внутренние функции
+module TaskTracker.Types.Internal where
+
+newtype TaskId = TaskId Int deriving (Show, Eq, Ord)
+unsafeMkTaskId :: Int -> TaskId
+unsafeMkTaskId = TaskId
+```
+
+```haskell
+-- TaskTracker.Types: публичный API, реэкспортирует безопасные функции
+module TaskTracker.Types (TaskId, mkTaskId, unTaskId) where
+
+import TaskTracker.Types.Internal (TaskId(..))
+
+mkTaskId :: Int -> Maybe TaskId
+mkTaskId n | n > 0 = Just (TaskId n) | otherwise = Nothing
+
+unTaskId :: TaskId -> Int
+unTaskId (TaskId n) = n
+```
+
+Технически `Internal`-модуль можно импортировать — но конвенция ясна: на свой страх и риск.
+
+### Паттерн реэкспорта
+
+Единая точка входа для библиотеки:
+
+```haskell
+module TaskTracker
+  ( module TaskTracker.Types
+  , module TaskTracker.Storage
+  , module TaskTracker.Filter
+  ) where
+
+import TaskTracker.Types
+import TaskTracker.Storage
+import TaskTracker.Filter
+```
+
+Пользователю хватит `import TaskTracker` вместо трёх отдельных импортов.
+
+## Организация пакета
+
+### Структура реального проекта
+
+```text
+task-tracker/
+├── package.yaml              -- описание пакета (hpack)
+├── stack.yaml                -- конфигурация Stack
+├── src/                      -- библиотека (library)
+│   ├── TaskTracker.hs
+│   └── TaskTracker/
+│       ├── Types.hs
+│       ├── Storage.hs
+│       └── Filter.hs
+├── app/                      -- исполняемый файл (executable)
+│   └── Main.hs
+└── test/                     -- тесты
+    ├── Spec.hs
+    └── TaskTracker/
+        └── TypesSpec.hs
+```
+
+### package.yaml
+
+```yaml
+name: task-tracker
+version: 0.1.0.0
+
+dependencies:
+  - base >= 4.7 && < 5
+  - text
+  - containers
+
+default-extensions:
+  - OverloadedStrings
+  - DerivingStrategies
+  - ImportQualifiedPost
+  - NamedFieldPuns
+  - LambdaCase
+
+library:
+  source-dirs: src
+  exposed-modules:
+    - TaskTracker
+    - TaskTracker.Types
+    - TaskTracker.Storage
+    - TaskTracker.Filter
+
+executables:
+  task-tracker-exe:
+    main: Main.hs
+    source-dirs: app
+    dependencies:
+      - task-tracker   # зависимость от собственной библиотеки
+
+tests:
+  task-tracker-test:
+    main: Spec.hs
+    source-dirs: test
+    dependencies:
+      - task-tracker
+      - hspec
+```
+
+- **library** — бизнес-логика в `src/`.
+- **executables** — точка входа, зависит от библиотеки.
+- **tests** — тесты, тоже зависят от библиотеки.
+
+```haskell
+-- app/Main.hs — минимальная точка входа
+module Main where
+
+import TaskTracker.CLI (runApp)
+
+main :: IO ()
+main = runApp
+```
+
+```admonish note title="hpack vs. cabal"
+`package.yaml` (hpack) — более лаконичная альтернатива `.cabal`-файлу. Stack автоматически генерирует `.cabal` из `package.yaml`. При использовании `cabal-install` без Stack можно писать `.cabal` напрямую.
+```
+
+## Custom Prelude
+
+В больших проектах стандартный `Prelude` иногда заменяют собственным — чтобы исключить частичные функции (`head`, `tail`) и добавить часто используемые типы:
+
+```haskell
+module TaskTracker.Prelude
+  ( module Prelude, Text, tshow ) where
+
+import Prelude hiding (head, tail, read)
+import Data.Text (Text, pack)
+
+tshow :: Show a => a -> Text
+tshow = pack . show
+```
+
+Использование: в `package.yaml` добавьте `NoImplicitPrelude`, в модулях — `import TaskTracker.Prelude`.
+
+```admonish warning title="Когда НЕ стоит"
+Custom Prelude вносит порог входа для новых участников. Для небольших проектов и библиотек стандартный `Prelude` — лучший выбор.
+```
+
+## CI/CD с GitHub Actions
+
+```yaml
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.6.7'
+          enable-stack: true
+
+      - name: Cache Stack
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.stack
+            .stack-work
+          key: ${{ runner.os }}-stack-${{ hashFiles('stack.yaml.lock') }}
+
+      - name: Build
+        run: stack build
+
+      - name: Test
+        run: stack test
+
+      - name: HLint
+        run: curl -sSL https://raw.github.com/ndmitchell/hlint/master/misc/run.sh | sh -s src/
+
+      - name: Fourmolu
+        run: |
+          stack install fourmolu
+          fourmolu --mode check src/
+```
+
+**HLint** — линтер с идиоматическими подсказками. **Fourmolu** — форматтер кода.
+
+```admonish tip title="Знакомый аналог"
+**TypeScript:** ESLint + Prettier. **Python:** ruff + black. **Go:** golangci-lint + gofmt.
+```
+
+## Проект: модульная структура трекера
+
+### TaskTracker.Types
+
+```haskell
+module TaskTracker.Types
+  ( Priority(..), showPriority
+  , Status(..), showStatus
+  , Task(..), mkTask
+  , TaskId, TaskStore(..)
+  ) where
+
+import Data.Map.Strict qualified as Map
+import Data.Text (Text)
+
+data Priority = Low | Medium | High
+  deriving (Show, Eq, Ord, Enum, Bounded)
+
+showPriority :: Priority -> String
+showPriority Low = "Низкий"; showPriority Medium = "Средний"; showPriority High = "Высокий"
+
+data Status = Todo | InProgress | Done
+  deriving (Show, Eq, Ord, Enum, Bounded)
+
+showStatus :: Status -> String
+showStatus Todo = "К выполнению"; showStatus InProgress = "В работе"; showStatus Done = "Выполнено"
+
+data Task = Task
+  { taskTitle :: Text, taskDescription :: Text
+  , taskPriority :: Priority, taskStatus :: Status
+  } deriving (Show, Eq)
+
+mkTask :: Text -> Priority -> Task
+mkTask title prio = Task title "" prio Todo
+
+type TaskId = Int
+newtype TaskStore = TaskStore { unTaskStore :: Map.Map TaskId Task }
   deriving (Show, Eq)
 ```
 
-Это рекурсивный алгебраический тип. Каждый конструктор представляет один вид узла в дереве выражений. Выражение `2 + 3 * 4` представляется как:
+Обратите внимание на явный список экспорта: `Priority(..)` открывает конструкторы (`Low`, `Medium`, `High`), тогда как `TaskId` экспортируется без конструктора (он — `type`-синоним). `Enum` и `Bounded` позволяют перечислять все значения через `[minBound..maxBound]`. `mkTask` — умный конструктор, который задаёт разумные значения по умолчанию.
+
+### TaskTracker.Storage
 
 ```haskell
-Add (Lit 2) (Mul (Lit 3) (Lit 4))
+module TaskTracker.Storage
+  ( emptyStore, addTask, deleteTask, completeTask, lookupTask, allTasks ) where
+
+import Data.Map.Strict qualified as Map
+import TaskTracker.Types
+
+emptyStore :: TaskStore
+emptyStore = TaskStore Map.empty
+
+addTask :: Task -> TaskId -> TaskStore -> (TaskStore, TaskId)
+addTask task nextId (TaskStore m) =
+  (TaskStore (Map.insert nextId task m), nextId + 1)
+
+deleteTask :: TaskId -> TaskStore -> TaskStore
+deleteTask tid (TaskStore m) = TaskStore (Map.delete tid m)
+
+completeTask :: TaskId -> TaskStore -> Either String TaskStore
+completeTask tid (TaskStore m) = case Map.lookup tid m of
+  Nothing   -> Left $ "Задача #" <> show tid <> " не найдена"
+  Just task -> Right (TaskStore (Map.insert tid (task { taskStatus = Done }) m))
+
+lookupTask :: TaskId -> TaskStore -> Maybe Task
+lookupTask tid (TaskStore m) = Map.lookup tid m
+
+allTasks :: TaskStore -> [(TaskId, Task)]
+allTasks (TaskStore m) = Map.toAscList m
 ```
 
-А `let x = 5 in x + 3` как:
-
-```haskell
-Let "x" (Lit 5) (Add (Var "x") (Lit 3))
-```
-
-### Pretty-printing
-
-Модуль также экспортирует функцию `prettyExpr`, которая преобразует AST обратно в читаемую строку:
-
-```haskell
-prettyExpr :: Expr -> String
-prettyExpr (Lit n)
-  | n == fromIntegral (round n :: Integer) = show (round n :: Integer)
-  | otherwise = show n
-prettyExpr (Var x)     = x
-prettyExpr (Add a b)   = "(" ++ prettyExpr a ++ " + " ++ prettyExpr b ++ ")"
--- ...
-```
-
-Попробуйте в GHCi:
-
-```text
-$ cd exercises/chapter15
-$ stack ghci
-
-> import Language.Expr
-> prettyExpr (Add (Lit 1) (Mul (Lit 2) (Lit 3)))
-"(1 + (2 * 3))"
-
-> prettyExpr (Let "x" (Lit 5) (Add (Var "x") (Lit 3)))
-"let x = 5 in (x + 3)"
-```
-
-Обратите внимание: `prettyExpr` и `Show` работают в разных направлениях:
-- `show` показывает структуру Haskell-значения (конструкторы AST)
-- `prettyExpr` показывает математическую запись выражения
-
-## Парсинг с megaparsec
-
-Строить AST вручную неудобно. Хотелось бы писать `"2 + 3 * 4"` и получать `Add (Lit 2) (Mul (Lit 3) (Lit 4))`. Для этого нужен **парсер** — программа, преобразующая текст в структурированное представление.
-
-**Megaparsec** — основная библиотека парсер-комбинаторов в Haskell. Она предоставляет набор базовых парсеров и способы их комбинирования для построения сложных парсеров.
-
-### Тип парсера
-
-```haskell
-type Parser = Parsec Void String
-```
-
-- `Parsec` — монадический парсер из megaparsec
-- `Void` — тип пользовательских ошибок (мы их не используем)
-- `String` — тип входного потока
-
-Поскольку `Parser` — монада, парсеры комбинируются через `do`-нотацию, `<$>`, `<*>` и `<|>`.
-
-### Лексический анализ
-
-Модуль `Language.Expr.Parser` определяет набор лексических утилит:
-
-```haskell
--- Пропуск пробелов
-sc :: Parser ()
-sc = L.space space1 empty empty
-
--- Обёртка: парсит значение и съедает пробелы после
-lexeme :: Parser a -> Parser a
-lexeme = L.lexeme sc
-
--- Парсит точную строку и съедает пробелы
-symbol :: String -> Parser String
-symbol = L.symbol sc
-
--- Парсит ключевое слово (не часть идентификатора)
-keyword :: String -> Parser ()
-keyword w = lexeme (string w *> notFollowedBy alphaNumChar)
-```
-
-Эти утилиты реализуют стандартный подход: каждый **токен** парсит своё содержимое и затем съедает пробелы после себя. Это избавляет от необходимости думать о пробелах в каждом правиле грамматики.
-
-### Парсинг выражений с приоритетом операторов
-
-Ключевая проблема при парсинге арифметических выражений — **приоритет операторов**. Выражение `2 + 3 * 4` должно разбираться как `2 + (3 * 4)`, а не `(2 + 3) * 4`.
-
-Megaparsec предоставляет функцию `makeExprParser` из модуля `Control.Monad.Combinators.Expr`, которая строит парсер по таблице операторов:
-
-```haskell
-operatorTable :: [[Operator Parser Expr]]
-operatorTable =
-  [ [ Prefix (Neg <$ symbol "-") ]           -- приоритет 1 (высший)
-  , [ InfixL (Mul <$ symbol "*")
-    , InfixL (Div <$ symbol "/") ]            -- приоритет 2
-  , [ InfixL (Add <$ symbol "+")
-    , InfixL (Sub <$ symbol "-") ]            -- приоритет 3 (низший)
-  ]
-```
-
-Каждый подсписок — один уровень приоритета. `Prefix` — префиксный оператор, `InfixL` — левоассоциативный инфиксный. Группы расположены от высшего приоритета к низшему.
-
-Атомарный парсер обрабатывает литералы, переменные и скобки:
-
-```haskell
-pTerm :: Parser Expr
-pTerm = parens pExpr
-    <|> Lit <$> number
-    <|> Var <$> identifier
-```
-
-### Запуск парсера
-
-Функция `parseExpr` оборачивает парсер и возвращает результат через `Either`:
-
-```haskell
-parseExpr :: String -> Either String Expr
-parseExpr input = case parse (sc *> pExpr <* eof) "" input of
-  Left err  -> Left (errorBundlePretty err)
-  Right ast -> Right ast
-```
-
-Обратите внимание на `sc *> pExpr <* eof`:
-- `sc` — пропускает начальные пробелы
-- `pExpr` — основной парсер
-- `eof` — убеждается, что вход полностью разобран
-
-Попробуйте в GHCi:
-
-```text
-> import Language.Expr.Parser
-> parseExpr "2 + 3 * 4"
-Right (Add (Lit 2.0) (Mul (Lit 3.0) (Lit 4.0)))
-
-> parseExpr "let x = 5 in x + 1"
-Right (Let "x" (Lit 5.0) (Add (Var "x") (Lit 1.0)))
-
-> parseExpr "((2 + 3))"
-Right (Add (Lit 2.0) (Lit 3.0))
-
-> parseExpr "2 +"
-Left "1:4:\n  |\n1 | 2 +\n  |    ^\nunexpected end of input\n..."
-```
-
-Megaparsec генерирует подробные сообщения об ошибках с указанием позиции.
-
-## JSON как предметно-ориентированный язык
-
-JSON — один из самых распространённых DSL для обмена данными. Его грамматика проста и хорошо подходит для изучения парсер-комбинаторов.
-
-Модуль `Language.Json` определяет тип JSON-значения:
-
-```haskell
-data JValue
-  = JNull                       -- null
-  | JBool Bool                  -- true / false
-  | JNumber Double              -- 42, 3.14
-  | JString String              -- "hello"
-  | JArray [JValue]             -- [1, 2, 3]
-  | JObject [(String, JValue)]  -- {"a": 1, "b": 2}
-  deriving (Show, Eq)
-```
-
-И pretty-printer для преобразования обратно в строку:
-
-```text
-> import Language.Json
-> prettyJson (JObject [("name", JString "Alice"), ("age", JNumber 30)])
-"{\"name\": \"Alice\", \"age\": 30}"
-```
-
-В упражнении 3 вам предстоит написать парсер, превращающий JSON-текст в значение типа `JValue`.
-
-## Интерпретация AST
-
-Имея AST, мы можем определить различные **интерпретации** — функции, которые обходят дерево и вычисляют результат. Pretty-printer — одна такая интерпретация. Вычислитель (evaluator) — другая.
-
-Паттерн интерпретации прост: рекурсивное сопоставление с образцом по конструкторам AST.
-
-```haskell
-eval :: Expr -> Either String Double
-eval (Lit n)   = Right n
-eval (Add a b) = (+) <$> eval a <*> eval b
-eval (Div a b) = do
-  x <- eval a
-  y <- eval b
-  if y == 0 then Left "division by zero" else Right (x / y)
--- ...
-```
-
-Тип `Either String Double` позволяет обрабатывать ошибки: `Right` — успешный результат, `Left` — сообщение об ошибке. Благодаря тому, что `Either e` — монада, ошибки автоматически «всплывают» через `<$>`, `<*>` и `>>=`.
-
-Обратите внимание на аппликативный стиль для `Add`: `(+) <$> eval a <*> eval b`. Это эквивалентно:
-
-```haskell
-eval (Add a b) = do
-  x <- eval a
-  y <- eval b
-  Right (x + y)
-```
-
-Аппликативная версия короче и подчёркивает, что обе ветви независимы.
-
-### Окружение и переменные
-
-Базовый вычислитель не поддерживает переменные. Для их поддержки нужно **окружение** (environment) — отображение имён в значения:
-
-```haskell
-type Env = Map String Double
-
-evalWithVars :: Env -> Expr -> Either String Double
-```
-
-При вычислении `Var x` ищем `x` в окружении. При вычислении `Let x e b` вычисляем `e`, расширяем окружение привязкой `x → результат` и вычисляем `b` в расширенном окружении.
-
-## Преобразования AST
-
-Помимо интерпретации, AST можно **трансформировать** — преобразовать в другое AST того же типа. Типичный пример — **оптимизация**: упрощение выражений по алгебраическим тождествам.
-
-Правила оптимизации для арифметических выражений:
-
-| Выражение | Результат | Тождество |
-|-----------|-----------|-----------|
-| `0 + x` | `x` | Нейтральный элемент сложения |
-| `x + 0` | `x` | Нейтральный элемент сложения |
-| `0 * x` | `0` | Поглощающий элемент умножения |
-| `1 * x` | `x` | Нейтральный элемент умножения |
-| `x - 0` | `x` | Нейтральный элемент вычитания |
-| `Neg (Neg x)` | `x` | Двойное отрицание |
-
-Ключевой приём: **сначала оптимизируем поддеревья, потом применяем правила к корню**. Это гарантирует, что оптимизации применяются рекурсивно.
-
-Например, `1 * (0 + y)`:
-1. Оптимизируем поддеревья: `1` → `1`, `0 + y` → `y`
-2. Получаем `1 * y`
-3. Применяем правило `1 * x → x`
-4. Результат: `y`
-
-Без рекурсивной оптимизации поддеревьев мы бы увидели `1 * (0 + y)`, применили бы только правило для `1 * x`, получив `0 + y`, но не упростив до `y`.
-
-## Теоретические основы: лямбда-исчисление
-
-Наш DSL арифметических выражений — простой пример. Но существует «DSL для всех DSL» — **лямбда-исчисление** (lambda calculus), формальная система, лежащая в основе функциональных языков.
-
-### Три конструкции — и ничего больше
-
-Лямбда-исчисление состоит всего из трёх элементов:
-
-```haskell
-data Term
-  = TmVar String          -- переменная: x
-  | TmAbs String Term     -- абстракция (функция): λx. body
-  | TmApp Term Term        -- применение: f x
-```
-
-Этого достаточно для выражения *любого* вычисления. Числа, логические значения, условия, рекурсия — всё кодируется через функции (Church encoding):
-
-```haskell
--- Church booleans (требуют RankNTypes):
--- true  = λt. λf. t
--- false = λt. λf. f
-
--- В Haskell:
-type ChurchBool = forall a. a -> a -> a
-true, false :: ChurchBool
-true  = \t _ -> t
-false = \_ f -> f
-```
-
-### Beta-редукция
-
-Единственное правило вычисления — **beta-редукция**: подстановка аргумента в тело функции:
-
-```text
-(λx. x + 1) 5  →  5 + 1  →  6
-```
-
-Реализация подстановки (наивная):
-
-```haskell
-subst :: String -> Term -> Term -> Term
-subst x s (TmVar v)
-  | x == v    = s
-  | otherwise = TmVar v
-subst x s (TmAbs y body)
-  | x == y    = TmAbs y body        -- y «затеняет» x
-  | otherwise = TmAbs y (subst x s body)
-subst x s (TmApp t1 t2) = TmApp (subst x s t1) (subst x s t2)
-```
-
-```admonish info title="Знакомый аналог"
-**TypeScript:** Arrow functions `x => x` — это лямбда-абстракция. Применение
-`(x => x)(5)` — это beta-редукция. Но в TS редукцию выполняет runtime (V8),
-а не вы вручную.
-```
-
-### De Bruijn Index
-
-Наивная подстановка ломается, если имена переменных совпадают (variable capture). Решение — **индексы де Брёйна** (de Bruijn, 1972): вместо имён переменных используются числа, указывающие «сколько λ вверх до связывающего λ»:
-
-```haskell
-data Expr = Var Int | Lam Expr | App Expr Expr
-
--- λx. x        →  Lam (Var 0)
--- λx. λy. x    →  Lam (Lam (Var 1))
--- λx. λy. y    →  Lam (Lam (Var 0))
-```
-
-Главное преимущество: **alpha-эквивалентность** (равенство с точностью до переименования) становится *структурным равенством*. `λx.x` и `λy.y` — это одно и то же выражение `Lam (Var 0)`.
-
-Связь с нашим DSL: конструктор `Let "x" e body` — это синтаксический сахар для `App (Abs "x" body) e`. Компилятор GHC внутри использует именно эту связь, превращая ваш Haskell-код в **Core** — типизированное лямбда-исчисление (System FC). Подробнее — в интерлюдии о GHC.
-
-## Expression Problem
-
-Наш тип `Expr` — **initial encoding**: данные представлены как тип-сумма, а интерпретации — как функции (pattern match). Это удобно для добавления *новых интерпретаций* (eval, optimize, prettyPrint), но неудобно для добавления *новых конструкций* — добавление `Mod` потребует изменить *каждую* функцию.
-
-Эта дилемма называется **Expression Problem** (Wadler, 1998):
-
-| | Новые операции | Новые типы данных |
-|---|---|---|
-| АТД + pattern match | Легко | Сложно (изменить все функции) |
-| Type classes (OOP) | Сложно (изменить все типы) | Легко |
-
-Два подхода к решению:
-
-1. **Data Types a la Carte** (Swierstra, 2008) — копродукт функторов:
-
-```haskell
-data (f :+: g) e = Inl (f e) | Inr (g e)
-
-data Val e = Val Int  deriving Functor
-data Add e = Add e e  deriving Functor
-data Mul e = Mul e e  deriving Functor  -- новое!
-
-type Expr = Fix (Val :+: Add :+: Mul)
-```
-
-2. **Tagless Final** (Kiselyov) — интерпретация через type classes:
-
-```haskell
-class ExprSym repr where
-  lit :: Int -> repr
-  add :: repr -> repr -> repr
-
--- Новая операция без изменения старого кода:
-class ExprSym repr => MulSym repr where
-  mul :: repr -> repr -> repr
-```
-
-Мы подробно разберём оба подхода в главе 20.
-
-```admonish info title="Знакомый аналог"
-**TypeScript:** Visitor pattern решает одно направление (новые операции для
-фиксированных типов); discriminated unions — другое. Ни один не решает оба
-одновременно без type assertions.
-```
-
-<details>
-<summary>Hash-Consing (продвинутая тема)</summary>
-
-### Hash-Consing
-
-При работе с большими AST часто возникают дублирующиеся поддеревья. **Hash-consing** — техника дедупликации: каждое уникальное выражение создаётся ровно один раз и получает уникальный идентификатор:
-
-```haskell
-data HC a = HC { hcId :: !Int, hcVal :: a }
-
-instance Eq (HC a) where
-  x == y = hcId x == hcId y  -- O(1) вместо O(n)!
-```
-
-Преимущества:
-- **O(1) equality**: сравнение двух деревьев — сравнение двух чисел.
-- **Мемоизация**: вычисление каждого уникального выражения происходит ровно один раз.
-- **Экономия памяти**: идентичные поддеревья разделяют один указатель.
-
-Применение: оптимизация компиляторов, символьные вычисления, BDD (Binary Decision Diagrams).
-
-</details>
-
-## Комбинаторы megaparsec для построения парсеров
-
-Вот основные комбинаторы, которые пригодятся для упражнения с JSON-парсером:
-
-| Комбинатор | Тип | Описание |
-|-----------|-----|----------|
-| `<\|>` | `Parser a -> Parser a -> Parser a` | Альтернатива: попробовать первый, при неудаче — второй |
-| `try` | `Parser a -> Parser a` | Откат при неудаче (backtracking) |
-| `between` | `Parser a -> Parser b -> Parser c -> Parser c` | Парсит содержимое между разделителями |
-| `sepBy` | `Parser a -> Parser sep -> Parser [a]` | Список, разделённый разделителем |
-| `manyTill` | `Parser a -> Parser end -> Parser [a]` | Повторяет парсер до конечного условия |
-| `char` | `Char -> Parser Char` | Парсит конкретный символ |
-| `L.float` | `Parser Double` | Дробное число |
-| `L.decimal` | `Parser Double` | Целое число |
-| `L.charLiteral` | `Parser Char` | Символ с поддержкой escape-последовательностей |
-
-Парсер `try p` — важный комбинатор. По умолчанию, если парсер `p` потребил часть входа и затем провалился, вход не восстанавливается. `try` включает откат: при неудаче парсер возвращается к исходной позиции, позволяя попробовать альтернативу через `<|>`.
+Каждая функция хранилища принимает и возвращает `TaskStore` явно — без глобального состояния. `completeTask` возвращает `Either String`: это позволяет вызывающей стороне обработать случай отсутствия задачи без исключений. `addTask` возвращает `(TaskStore, TaskId)` — следующий свободный идентификатор, чтобы вызывающий код мог отслеживать его без отдельного счётчика.
 
 ## Упражнения
 
-Решения пишите в файле `test/MySolutions.hs`. После каждого упражнения запускайте `stack test`.
+Решения пишите в `test/MySolutions.hs`. Проверяйте: `stack test`.
 
-1. **(Лёгкое)** Реализуйте функцию `eval :: Expr -> Either String Double`, которая вычисляет арифметические выражения.
+### Проект ★☆☆
 
-    Требования:
-    - Поддерживает `Lit`, `Add`, `Sub`, `Mul`, `Div`, `Neg`.
-    - Для `Var` и `Let` возвращает `Left` с сообщением об ошибке.
-    - При делении на ноль возвращает `Left "division by zero"`.
-
-    *Подсказка:* используйте аппликативный стиль `(+) <$> eval a <*> eval b` для бинарных операций. Для деления используйте `do`-нотацию, чтобы проверить делитель.
-
-2. **(Среднее)** Реализуйте функцию `optimize :: Expr -> Expr`, которая упрощает выражения по алгебраическим правилам.
-
-    Правила (применяйте рекурсивно — сначала поддеревья, потом корень):
-
-    ```text
-    0 + x  →  x          x + 0  →  x
-    0 * x  →  Lit 0      x * 0  →  Lit 0
-    1 * x  →  x          x * 1  →  x
-    x - 0  →  x
-    Neg (Neg x)  →  x
-    ```
-
-    *Подсказка:* для каждого конструктора сначала рекурсивно оптимизируйте дочерние выражения, затем примените сопоставление с образцом для упрощения:
+1. Определите модуль `TaskTracker.Stats` с явным экспортом и функцией:
 
     ```haskell
-    optimize (Add a b) = case (optimize a, optimize b) of
-      (Lit 0, x) -> x
-      -- ...
+    data TaskStats = TaskStats
+      { totalTasks :: Int, todoCount :: Int, doneCount :: Int, highPriority :: Int
+      } deriving (Show, Eq)
+
+    computeStats :: TaskStore -> TaskStats
     ```
 
-3. **(Среднее)** Реализуйте парсер `parseJsonValue :: Parser JValue` для подмножества JSON.
+2. Определите «умный конструктор» `mkPriority :: String -> Maybe Priority` — парсит `"low"`, `"medium"`, `"high"` (регистронезависимо).
 
-    Поддерживаемые значения: `null`, `true`, `false`, числа, строки, массивы и объекты.
+### Проект ★★☆
 
-    Используйте утилиты из `Language.Expr.Parser`: `sc`, `lexeme`, `symbol`, `keyword`.
+3. Вынесите `parseCommand` в модуль `TaskTracker.Command`. Экспортируйте `Command(..)` и `parseCommand`, но скройте внутреннюю `parsePriority`.
 
-    *Подсказка:* структура парсера — цепочка альтернатив:
+4. Создайте модуль `TaskTracker.Render` с функциями форматирования:
 
     ```haskell
-    parseJsonValue =
-          JNull       <$  keyword "null"
-      <|> JBool True  <$  keyword "true"
-      <|> -- ...
+    renderTask :: (TaskId, Task) -> String
+    renderTaskList :: [(TaskId, Task)] -> String
+    renderStats :: TaskStats -> String
     ```
 
-    Для строк используйте `manyTill L.charLiteral (char '"')` после начальной кавычки. Для массивов и объектов — `between` и `sepBy`.
+### Практика ★☆☆
 
-4. **(Продвинутое)** Реализуйте `evalWithVars :: Map String Double -> Expr -> Either String Double` — вычислитель с поддержкой переменных.
+5. Напишите модуль с абстрактным типом `NonEmptyText` — гарантирует, что текст не пустой:
 
-    Требования:
-    - `Var x` — найти `x` в окружении. Если не найден, вернуть `Left "undefined variable: x"`.
-    - `Let x e b` — вычислить `e`, добавить `x = результат` в окружение, вычислить `b`.
-    - Остальные операции — как в `eval`.
+    ```haskell
+    module NonEmptyText (NonEmptyText, mkNonEmptyText, unNonEmptyText) where
+    ```
 
-    *Подсказка:* используйте `Map.lookup` для поиска и `Map.insert` для расширения окружения. Для `Let` используйте рекурсивный вызов `evalWithVars` с расширенным окружением.
+6. Напишите модуль, реэкспортирующий `Data.Map.Strict` с утилитой `lookupDefault :: Ord k => v -> k -> Map k v -> v`.
+
+### Практика ★★☆
+
+7. Создайте `TaskTracker.Import`, парсящий CSV в список задач:
+
+    ```haskell
+    parseCSV :: Text -> Either String [Task]
+    ```
+
+8. Напишите `package.yaml` для трекера с тремя компонентами (library, executable, test) и `exposed-modules`.
 
 ## Заключение
 
-В этой главе мы:
+Система модулей в Haskell проста, но выразительна: явный экспорт создаёт абстрактные типы, конвенция `Internal` заменяет `private`, реэкспорт собирает библиотеку в единую точку входа. Структура пакета (library + executable + test) отделяет бизнес-логику от точки входа и тестов. С этими знаниями трекер задач превратился из монолитного файла в модульную иерархию.
 
-- Познакомились с понятием предметно-ориентированных языков (DSL).
-- Определили AST арифметических выражений как алгебраический тип данных.
-- Изучили библиотеку megaparsec: лексический анализ, парсер-комбинаторы, таблицы операторов.
-- Разобрали JSON как пример DSL с типом `JValue`.
-- Научились интерпретировать AST: вычисление с обработкой ошибок через `Either`.
-- Реализовали трансформации AST: оптимизация по алгебраическим тождествам.
-- Познакомились с лямбда-исчислением — теоретическим фундаментом DSL и функциональных языков.
-- Узнали об Expression Problem и двух подходах к его решению.
-- Расширили вычислитель окружением для поддержки переменных.
+В [следующей главе](chapter16.md) мы перейдём к конкурентности — потокам, `async` и STM.
 
-Создание DSL — одна из сильнейших сторон Haskell. Алгебраические типы данных позволяют точно описать структуру языка, сопоставление с образцом — написать интерпретаторы и трансформации, а монадические парсер-комбинаторы — построить полноценный парсер без внешних инструментов.
+```admonish tip title="Для углубления"
+- **Haskell MOOC** — [haskell.mooc.fi](https://haskell.mooc.fi/), лекция 13: «Modules».
+- **Cabal User Guide** — [cabal.readthedocs.io](https://cabal.readthedocs.io/).
+- **hpack** — [github.com/sol/hpack](https://github.com/sol/hpack).
+- **HLint** — [github.com/ndmitchell/hlint](https://github.com/ndmitchell/hlint).
+- **Fourmolu** — [github.com/fourmolu/fourmolu](https://github.com/fourmolu/fourmolu).
+```

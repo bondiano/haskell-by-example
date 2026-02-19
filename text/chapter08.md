@@ -1,587 +1,506 @@
-# Монады
+# Обработка ошибок
 
-## Цели главы
+В предыдущих главах мы познакомились с `Maybe` для представления отсутствующих значений и написали CLI-трекер задач с `IORef`. Но трекер пока наивен: он не сообщает *причину* ошибки, а IO-операции могут завершиться исключением, которое мы не обрабатываем. В этой главе мы разберём `Either` для ошибок с информацией, собственные типы ошибок, цепочки операций с `Either`, исключения в `IO` (`try`, `catch`, `throwIO`) и добавим надёжную обработку ошибок в трекер.
 
-В предыдущей главе мы познакомились с `Applicative` — абстракцией, позволяющей применять функции к значениям в контексте. В этой главе мы пойдём дальше и разберём **монады** — один из ключевых механизмов Haskell.
+## Maybe — значение, которого может не быть
 
-Мы изучим класс типов `Monad`, разберём `do`-нотацию как синтаксический сахар для оператора `>>=`, рассмотрим конкретные монады (`Maybe`, `Either`, список, `Writer`, `Reader`) и сформулируем законы монад.
-
-## Структура проекта
-
-Откройте директорию `exercises/chapter08`:
-
-```text
-chapter08/
-├── package.yaml
-├── src/
-│   └── Data/
-│       ├── Phonebook.hs      ← вложенные Map для поиска
-│       └── Chess.hs           ← шахматный конь
-├── test/
-│   ├── Spec.hs               ← тесты
-│   └── MySolutions.hs        ← ваши решения
-└── no-peeking/
-    └── Solutions.hs           ← эталонные решения
-```
-
-## От Applicative к Monad
-
-В главе 7 мы видели, как `Applicative` позволяет применять чистые функции к значениям «в контексте»:
+Мы уже знаем `Maybe` из [главы 2](chapter02.md):
 
 ```haskell
-(+) <$> Just 3 <*> Just 5   -- Just 8
-(+) <$> Just 3 <*> Nothing  -- Nothing
+data Maybe a = Nothing | Just a
 ```
 
-Но `Applicative` имеет ограничение: **следующее вычисление не может зависеть от результата предыдущего**. Каждый аргумент `<*>` определяется заранее.
-
-Рассмотрим задачу. У нас есть вложенная телефонная книга: по городу находим отдел, по отделу — сотрудника, по сотруднику — телефон.
+`Maybe` отлично подходит, когда единственная причина неудачи очевидна из контекста:
 
 ```haskell
-type Departments = Map String (Map String String)
+import qualified Data.Map.Strict as Map
 
-lookupPhone :: String -> String -> Departments -> Maybe String
-lookupPhone city name deps =
-  case Map.lookup city deps of
-    Nothing   -> Nothing
-    Just dept -> case Map.lookup name dept of
-      Nothing    -> Nothing
-      Just phone -> Just phone
+lookupTask :: Int -> Map.Map Int Task -> Maybe Task
+lookupTask = Map.lookup
 ```
 
-Каждый следующий `Map.lookup` **зависит от результата предыдущего** — мы не можем передать его через `<*>`. Нам нужна операция, которая:
+Если `lookupTask 42 store` возвращает `Nothing`, причина ясна: задачи с таким идентификатором нет. Дополнительная информация не нужна.
 
-1. Выполняет первое вычисление.
-2. Передаёт его результат в функцию, определяющую следующее вычисление.
+Но иногда `Nothing` недостаточно. Представьте функцию `parseCommand :: String -> Maybe Command`. Если она вернула `Nothing`, пользователь не узнает, *что именно* пошло не так: неизвестная команда? неверный формат? пустой ввод?
 
-Эта операция — **bind** (`>>=`).
+## Either — ошибки с информацией
 
-## Класс типов Monad
+Для таких случаев в Haskell есть `Either`:
 
 ```haskell
-class Applicative m => Monad m where
-  (>>=)  :: m a -> (a -> m b) -> m b
-  (>>)   :: m a -> m b -> m b
-  return :: a -> m a
-
-  m >> n  = m >>= \_ -> n       -- по умолчанию
-  return  = pure                -- по умолчанию
+data Either a b = Left a | Right b
 ```
 
-- `>>=` (bind, «связать») — выполняет вычисление `m a`, передаёт результат в функцию `a -> m b`.
-- `>>` — выполняет два вычисления последовательно, результат первого игнорируется.
-- `return` — то же, что `pure` из `Applicative` (оборачивает значение в контекст).
+По соглашению:
 
-Иерархия: `Functor` ⊂ `Applicative` ⊂ `Monad`. Каждая монада — аппликатив, каждый аппликатив — функтор.
+- `Left` — ошибка (содержит описание проблемы).
+- `Right` — успех (содержит результат).
 
-```text
-fmap  :: (a -> b)   -> f a -> f b      -- Functor
-(<*>) :: f (a -> b) -> f a -> f b      -- Applicative
-(>>=) :: m a -> (a -> m b) -> m b      -- Monad
+```admonish tip title="Знакомый аналог"
+**Rust:** `Result<T, E>` — `Ok(value)` / `Err(error)`. Прямой аналог `Either`.
+**Scala:** `Try[T]` / `Either[E, T]`.
+**TypeScript:** часто используют `{ ok: true, value: T } | { ok: false, error: E }` — те же два варианта, но без поддержки компилятора.
 ```
 
-Ключевое отличие `>>=` от `<*>`: функция `a -> m b` **сама выбирает** следующее вычисление на основе полученного значения `a`.
-
-## Maybe как монада
-
-`Maybe` — простейшая монада. Она моделирует вычисления, которые могут не дать результата:
+Простой пример — парсинг команды:
 
 ```haskell
-instance Monad Maybe where
-  Nothing >>= _ = Nothing     -- если провал — дальше не идём
-  Just x  >>= f = f x         -- если успех — передаём в f
+data Command
+  = AddCmd String
+  | CompleteCmd Int
+  | ListCmd
+  deriving (Show)
+
+parseCommand :: String -> Either String Command
+parseCommand input = case words input of
+  ["add", title]     -> Right (AddCmd title)
+  ["complete", nStr] -> case reads nStr of
+    [(n, "")] -> Right (CompleteCmd n)
+    _         -> Left ("Неверный номер задачи: " <> nStr)
+  ["list"]           -> Right ListCmd
+  []                 -> Left "Пустой ввод"
+  (cmd : _)          -> Left ("Неизвестная команда: " <> cmd)
 ```
 
-Перепишем `lookupPhone` через `>>=`:
+Теперь при ошибке пользователь получает конкретное сообщение, а не просто «ничего не найдено».
+
+### Обработка Either через case
+
+Результат `Either` обрабатывается сопоставлением с образцом:
 
 ```haskell
-lookupPhone :: String -> String -> Departments -> Maybe String
-lookupPhone city name deps =
-  Map.lookup city deps >>= \dept ->
-  Map.lookup name dept
-```
-
-Сравните с версией на `case`: три уровня вложенности сократились до одной строки. Оператор `>>=` автоматически «протаскивает» `Nothing` — если любой шаг вернёт `Nothing`, вся цепочка вернёт `Nothing`.
-
-Цепочку можно продолжать:
-
-```haskell
-Map.lookup "Москва" deps >>= \dept ->
-Map.lookup "Алиса" dept  >>= \phone ->
-Just ("Телефон: " ++ phone)
-```
-
-## Either как монада
-
-`Either e` работает аналогично `Maybe`, но при провале сохраняет сообщение об ошибке:
-
-```haskell
-instance Monad (Either e) where
-  Left err >>= _ = Left err    -- ошибка: дальше не идём
-  Right x  >>= f = f x         -- успех: продолжаем
-```
-
-Пример — валидация с ранним выходом:
-
-```haskell
-validateAge :: Int -> Either String Int
-validateAge age
-  | age < 0   = Left "Возраст не может быть отрицательным"
-  | age > 150 = Left "Возраст слишком большой"
-  | otherwise = Right age
-
-validateName :: String -> Either String String
-validateName name
-  | null name = Left "Имя не может быть пустым"
-  | otherwise = Right name
-
-validatePerson :: String -> Int -> Either String (String, Int)
-validatePerson name age =
-  validateName name >>= \n ->
-  validateAge age   >>= \a ->
-  Right (n, a)
-```
-
-Первая ошибка прерывает всю цепочку:
-
-```text
-> validatePerson "" 25
-Left "Имя не может быть пустым"
-
-> validatePerson "Алиса" (-5)
-Left "Возраст не может быть отрицательным"
-
-> validatePerson "Алиса" 25
-Right ("Алиса", 25)
-```
-
-> **Отличие от `Validation`** (глава 7): `Either` как монада останавливается на *первой* ошибке, а `Validation` с `Applicative` *накапливает* все ошибки. Это принципиальная разница: монадическая цепочка `>>=` не может продолжить вычисление после ошибки, потому что следующий шаг зависит от предыдущего результата.
-
-## Монада списка
-
-Список `[]` — монада, моделирующая **недетерминизм**: каждое вычисление может вернуть несколько (или ноль) результатов, и `>>=` комбинирует все варианты:
-
-```haskell
-instance Monad [] where
-  xs >>= f = concatMap f xs
-```
-
-Пример — все пары из двух списков:
-
-```haskell
-pairs :: [a] -> [b] -> [(a, b)]
-pairs xs ys = xs >>= \x -> ys >>= \y -> [(x, y)]
+handleCommand :: String -> String
+handleCommand input =
+  case parseCommand input of
+    Left err  -> "Ошибка: " <> err
+    Right cmd -> "Команда: " <> show cmd
 ```
 
 ```text
-> pairs [1, 2] ['a', 'b']
-[(1,'a'), (1,'b'), (2,'a'), (2,'b')]
+> handleCommand "add Купить молоко"
+"Команда: AddCmd \"Купить молоко\""
+
+> handleCommand "delete 5"
+"Ошибка: Неизвестная команда: delete"
+
+> handleCommand ""
+"Ошибка: Пустой ввод"
 ```
 
-Каждый элемент `xs` комбинируется с каждым элементом `ys` — как вложенный цикл в императивном коде.
+## Собственные типы ошибок
 
-### Связь с генераторами списков
-
-Генераторы списков (list comprehensions) — это синтаксический сахар для монады списка:
+Строки в `Left` — плохая практика для серьёзных приложений. Лучше определить **алгебраический тип ошибок**:
 
 ```haskell
--- Генератор списков
-[(x, y) | x <- [1, 2], y <- ['a', 'b']]
+newtype TaskId = TaskId Int
+  deriving (Show, Eq, Ord)
 
--- Эквивалент через >>=
-[1, 2] >>= \x -> ['a', 'b'] >>= \y -> [(x, y)]
+data AppError
+  = TaskNotFound TaskId
+  | DuplicateTask String
+  | InvalidInput String
+  | FileError String
+  deriving (Show, Eq)
 ```
 
-### guard: фильтрация в монаде списка
+Преимущества перед строками:
 
-Функция `guard` из `Control.Monad` работает как фильтр:
+- **Исчерпывающий `case`** — компилятор предупредит, если вы забыли обработать какой-то вариант ошибки.
+- **Паттерн-матчинг** — можно реагировать на разные ошибки по-разному.
+- **Типобезопасность** — нельзя случайно передать произвольную строку вместо ошибки.
+
+Используем `AppError` в функциях трекера:
 
 ```haskell
-guard :: Bool -> [()]
-guard True  = [()]
-guard False = []
+import qualified Data.Map.Strict as Map
+
+newtype TaskStore = TaskStore { unTaskStore :: Map.Map TaskId Task }
+  deriving (Show)
+
+addTaskSafe :: TaskId -> Task -> TaskStore -> Either AppError TaskStore
+addTaskSafe tid task store
+  | Map.member tid (unTaskStore store) = Left (DuplicateTask (taskTitle task))
+  | otherwise = Right (TaskStore (Map.insert tid task (unTaskStore store)))
+
+findTaskSafe :: TaskId -> TaskStore -> Either AppError Task
+findTaskSafe tid store =
+  case Map.lookup tid (unTaskStore store) of
+    Nothing   -> Left (TaskNotFound tid)
+    Just task -> Right task
+
+completeTaskSafe :: TaskId -> TaskStore -> Either AppError TaskStore
+completeTaskSafe tid store =
+  case Map.lookup tid (unTaskStore store) of
+    Nothing   -> Left (TaskNotFound tid)
+    Just task ->
+      let updated = task { taskStatus = Done }
+      in  Right (TaskStore (Map.insert tid updated (unTaskStore store)))
 ```
 
-Если условие ложно, `guard` возвращает пустой список, обрывая ветвь. Если истинно — продолжает:
+### Отображение ошибок
+
+Для пользователя ADT-ошибку нужно преобразовать в читаемое сообщение:
 
 ```haskell
-import Control.Monad (guard)
-
--- Все пифагоровы тройки до n
-pythagorean :: Int -> [(Int, Int, Int)]
-pythagorean n =
-  [1..n] >>= \a ->
-  [a..n] >>= \b ->
-  [b..n] >>= \c ->
-  guard (a*a + b*b == c*c) >>
-  [(a, b, c)]
+showError :: AppError -> String
+showError (TaskNotFound (TaskId n)) = "Задача #" <> show n <> " не найдена"
+showError (DuplicateTask title)     = "Задача \"" <> title <> "\" уже существует"
+showError (InvalidInput msg)        = "Неверный ввод: " <> msg
+showError (FileError msg)           = "Ошибка файла: " <> msg
 ```
+
+## Цепочки операций с Either
+
+Допустим, мы хотим: найти задачу, проверить что она не завершена, и завершить её. Каждый шаг может вернуть ошибку:
+
+```haskell
+completeIfNotDone :: TaskId -> TaskStore -> Either AppError TaskStore
+completeIfNotDone tid store =
+  case findTaskSafe tid store of
+    Left err   -> Left err
+    Right task ->
+      case taskStatus task of
+        Done -> Left (InvalidInput "Задача уже завершена")
+        _    ->
+          let updated = task { taskStatus = Done }
+          in  Right (TaskStore (Map.insert tid updated (unTaskStore store)))
+```
+
+Каждая операция с `Either` добавляет уровень вложенности. С тремя-четырьмя шагами код превращается в «лесенку»:
+
+```haskell
+-- Три последовательных операции — три уровня вложенности
+processThreeSteps :: TaskId -> TaskStore -> Either AppError TaskStore
+processThreeSteps tid store =
+  case step1 tid store of
+    Left err -> Left err
+    Right store1 ->
+      case step2 tid store1 of
+        Left err -> Left err
+        Right store2 ->
+          case step3 tid store2 of
+            Left err     -> Left err
+            Right store3 -> Right store3
+```
+
+Этот паттерн повторяется: «если `Left` — пробросить ошибку дальше, если `Right` — передать значение в следующий шаг». Можно вынести его в вспомогательную функцию:
+
+```haskell
+andThen :: Either e a -> (a -> Either e b) -> Either e b
+andThen (Left err) _ = Left err
+andThen (Right x)  f = f x
+```
+
+Теперь цепочка выглядит чище:
+
+```haskell
+processThreeSteps :: TaskId -> TaskStore -> Either AppError TaskStore
+processThreeSteps tid store =
+  step1 tid store `andThen` \store1 ->
+  step2 tid store1 `andThen` \store2 ->
+  step3 tid store2
+```
+
+```admonish note title="Заглядывая вперёд"
+Функция `andThen` — это в точности оператор `>>=` (bind) для `Either`. В [главе 12](chapter12.md) мы узнаем, что `Either` — монада, и научимся использовать `>>=` и `do`-нотацию для элегантных цепочек. А пока `andThen` и `case` — наши инструменты.
+```
+
+### Мост между Maybe и Either
+
+Часто нужно превратить `Maybe` в `Either`, добавив описание ошибки. Напишем вспомогательную функцию:
+
+```haskell
+maybeToEither :: e -> Maybe a -> Either e a
+maybeToEither err Nothing  = Left err
+maybeToEither _   (Just x) = Right x
+```
+
+С ней `findTaskSafe` становится однострочником:
+
+```haskell
+findTaskSafe :: TaskId -> TaskStore -> Either AppError Task
+findTaskSafe tid store =
+  maybeToEither (TaskNotFound tid) (Map.lookup tid (unTaskStore store))
+```
+
+```admonish warning title="Осторожно: парциальные функции"
+Не используйте `fromJust`, `head`, `read` без проверки — они падают с ошибкой на пустом вводе:
+
+- `fromJust Nothing` — `*** Exception: Maybe.fromJust: Nothing`
+- `head []` — `*** Exception: Prelude.head: empty list`
+- `read "abc" :: Int` — `*** Exception: Prelude.read: no parse`
+
+Вместо них используйте безопасные аналоги: паттерн-матчинг на `Maybe`, `listToMaybe`, `readMaybe` из `Text.Read`.
+```
+
+## Исключения в IO
+
+Чистые функции сигнализируют об ошибках через `Maybe` и `Either` — это *значения*, которые компилятор заставляет обработать. Но в `IO` ситуация другая: файл может не существовать, сеть может быть недоступна, диск может быть переполнен. Для таких случаев в Haskell есть **исключения**.
+
+### Иерархия исключений
+
+В Haskell все исключения наследуют от `SomeException`:
 
 ```text
-> pythagorean 20
-[(3,4,5),(5,12,13),(6,8,10),(8,15,17),(9,12,15)]
+SomeException
+├── IOException        -- файлы, сеть, права доступа
+├── ArithException     -- деление на ноль и т.д.
+├── ErrorCall          -- вызов error "..."
+└── ...                -- пользовательские типы
 ```
 
-## do-нотация
+Наиболее частый тип — `IOException` (ошибки ввода-вывода).
 
-Цепочки `>>=` с лямбдами быстро становятся нечитаемыми. Haskell предоставляет **do-нотацию** — синтаксический сахар:
+### try — перехват исключения в Either
+
+Функция `try` превращает IO-действие, которое может бросить исключение, в `Either`:
 
 ```haskell
--- Через >>=
-lookupPhone city name deps =
-  Map.lookup city deps >>= \dept ->
-  Map.lookup name dept
+import Control.Exception (try, IOException)
 
--- Через do
-lookupPhone city name deps = do
-  dept  <- Map.lookup city deps
-  Map.lookup name dept
+-- try :: Exception e => IO a -> IO (Either e a)
+
+loadFile :: FilePath -> IO (Either String String)
+loadFile path = do
+  result <- try (readFile path) :: IO (Either IOException String)
+  case result of
+    Left err       -> pure (Left (show err))
+    Right contents -> pure (Right contents)
 ```
 
-### Правила десахаризации
-
-`do`-нотация раскрывается в `>>=` и `>>` по простым правилам:
-
-```haskell
--- 1. x <- action  ⟹  action >>= \x ->
--- 2. action        ⟹  action >>
--- 3. let x = expr  ⟹  let x = expr in
--- 4. Последнее выражение — результат всего do-блока
-```
-
-Пример пошаговой десахаризации:
-
-```haskell
--- do-нотация              -- десахаризация
-do                         -- Map.lookup city deps >>= \dept ->
-  dept <- Map.lookup       --   Map.lookup name dept >>= \phone ->
-            city deps      --     Just ("Тел: " ++ phone)
-  phone <- Map.lookup
-             name dept
-  Just ("Тел: " ++ phone)
-```
-
-### let в do-блоке
-
-`let` в `do`-блоке связывает **чистое** значение (без `<-`):
-
-```haskell
-transform :: Maybe Int -> Maybe String
-transform mx = do
-  x <- mx
-  let doubled = x * 2        -- чистое вычисление
-  let message = show doubled
-  Just ("Результат: " ++ message)
-```
-
-### Паттерн-матчинг в `<-`
-
-В `<-` можно использовать паттерн:
-
-```haskell
-firstAndSecond :: [(String, Int)] -> Maybe (String, Int)
-firstAndSecond pairs = do
-  (name, _) <- lookup "first" pairs   -- деструктуризация пары
-  (_, age)  <- lookup "second" pairs
-  Just (name, age)
-```
-
-Если паттерн не совпадает, вызывается `fail` из `MonadFail`. Для `Maybe` это `Nothing`.
-
-## do-нотация работает для любой монады
-
-`do`-нотация **не привязана к `IO`**. Она работает для любого типа с экземпляром `Monad`:
-
-```haskell
--- Maybe
-safeDivide :: Double -> Double -> Maybe Double
-safeDivide _ 0 = Nothing
-safeDivide x y = Just (x / y)
-
-calculate :: Maybe Double
-calculate = do
-  a <- safeDivide 10 3
-  b <- safeDivide 20 a
-  safeDivide b 2
-```
-
-```haskell
--- Список
-chessMoves :: [(Int, Int)]
-chessMoves = do
-  x <- [1..3]
-  y <- [1..3]
-  guard (x /= y)
-  return (x, y)
-```
-
-```haskell
--- Either
-parseConfig :: String -> Either String Int
-parseConfig s = do
-  stripped <- if null s then Left "пустая строка" else Right s
-  case reads stripped of
-    [(n, "")] -> Right n
-    _         -> Left ("не число: " ++ stripped)
-```
-
-## Writer: монада с логированием
-
-Монада `Writer` позволяет накапливать «попутный» вывод наряду с основным результатом. Это полезно для логирования, аудита, сбора метрик.
-
-```haskell
-import Control.Monad.Writer
-
--- Writer w a — вычисление с результатом a и накопленным выводом w
--- w должен быть моноидом (чтобы его можно было объединять)
-```
-
-Основные функции:
-
-```haskell
-tell      :: w -> Writer w ()           -- записать в лог
-runWriter :: Writer w a -> (a, w)       -- запустить и получить (результат, лог)
-```
-
-Пример — вычисление с аудит-логом:
-
-```haskell
-type Log = [String]
-
-gcd' :: Int -> Int -> Writer Log Int
-gcd' a 0 = do
-  tell ["Готово: " ++ show a]
-  return a
-gcd' a b = do
-  tell [show a ++ " mod " ++ show b ++ " = " ++ show (a `mod` b)]
-  gcd' b (a `mod` b)
-```
+Обратите внимание: нам нужна аннотация типа `:: IO (Either IOException String)`, чтобы указать, какой *тип* исключений мы ловим. Без неё GHC не знает, что перехватывать.
 
 ```text
-> runWriter (gcd' 12 8)
-(4, ["12 mod 8 = 4", "8 mod 4 = 0", "Готово: 4"])
+> loadFile "существующий-файл.txt"
+Right "содержимое файла..."
+
+> loadFile "несуществующий-файл.txt"
+Left "несуществующий-файл.txt: openFile: does not exist (No such file or directory)"
 ```
 
-`Writer` накапливает лог автоматически: каждый `tell` дописывает к общему логу через `(<>)` моноида.
+### catch — обработка исключения
 
-## Reader: монада с окружением
-
-Монада `Reader` передаёт **неизменяемое окружение** через цепочку вычислений — без необходимости передавать его явно в каждую функцию.
+`catch` перехватывает исключение и вызывает обработчик:
 
 ```haskell
-import Control.Monad.Reader
+import Control.Exception (catch, IOException)
 
--- Reader r a — вычисление, читающее окружение типа r и возвращающее a
+loadFileWithDefault :: FilePath -> String -> IO String
+loadFileWithDefault path def =
+  readFile path `catch` handler
+  where
+    handler :: IOException -> IO String
+    handler _ = pure def
 ```
 
-Основные функции:
+### throwIO — выбрасывание исключения
+
+`throwIO` бросает исключение из IO-кода. Для пользовательских исключений нужен экземпляр `Exception`:
 
 ```haskell
-ask       :: Reader r r               -- получить всё окружение
-asks      :: (r -> a) -> Reader r a   -- получить часть окружения
-local     :: (r -> r) -> Reader r a -> Reader r a  -- изменить окружение локально
-runReader :: Reader r a -> r -> a     -- запустить с окружением
+import Control.Exception (throwIO, Exception, try, IOException)
+
+data AppException = ConfigMissing FilePath
+  deriving (Show)
+
+instance Exception AppException
+
+loadConfig :: FilePath -> IO String
+loadConfig path = do
+  result <- try (readFile path) :: IO (Either IOException String)
+  case result of
+    Left _         -> throwIO (ConfigMissing path)
+    Right contents -> pure contents
 ```
 
-Пример — форматирование с конфигурацией:
+```admonish tip title="Знакомый аналог"
+**JavaScript/Python:** `try { ... } catch (e) { ... }` — синтаксически похоже, но в Haskell есть принципиальное отличие: чистые функции *не могут* бросать исключения (кроме `error` и `undefined`, которых следует избегать). Исключения живут только в `IO`.
+```
+
+### Файловые операции трекера
+
+Применим `try` к нашему трекеру — загрузка и сохранение задач:
 
 ```haskell
-data Config = Config
-  { cfgIndent    :: Int
-  , cfgUpperCase :: Bool
-  } deriving (Show)
+import Control.Exception (try, IOException)
 
-formatName :: String -> Reader Config String
-formatName name = do
-  cfg <- ask
-  let formatted = if cfgUpperCase cfg
-        then map toUpper name
-        else name
-  let indent = replicate (cfgIndent cfg) ' '
-  return (indent ++ formatted)
+loadTasksFromFile :: FilePath -> IO (Either AppError TaskStore)
+loadTasksFromFile path = do
+  result <- try (readFile path) :: IO (Either IOException String)
+  case result of
+    Left err       -> pure (Left (FileError (show err)))
+    Right contents -> pure (parseTaskStore contents)
+
+parseTaskStore :: String -> Either AppError TaskStore
+parseTaskStore contents =
+  case reads contents of
+    [(store, "")] -> Right store
+    _             -> Left (InvalidInput "Не удалось разобрать файл задач")
+
+saveTasksToFile :: FilePath -> TaskStore -> IO (Either AppError ())
+saveTasksToFile path store = do
+  result <- try (writeFile path (show store)) :: IO (Either IOException ())
+  case result of
+    Left err -> pure (Left (FileError (show err)))
+    Right () -> pure (Right ())
 ```
+
+IO-исключение (`IOException`) превращается в значение нашего типа `AppError` и дальше обрабатывается единообразно с остальными ошибками.
+
+## Когда что использовать
+
+| Механизм | Когда применять | Примеры |
+|----------|----------------|---------|
+| `Maybe` | Единственная очевидная причина неудачи | `Map.lookup`, `listToMaybe`, `find` |
+| `Either` | Нужна информация о причине ошибки; чистый код | Валидация, парсинг, бизнес-логика |
+| Исключения (`try`/`catch`) | Непредсказуемые внешние сбои в `IO` | Файлы, сеть, системные вызовы |
+
+Практическое правило: **чистый код** — только `Maybe` и `Either`; **граница IO** — `try` для перехвата, немедленная конвертация в `Either AppError`; **верхний уровень** — обработка `Either` и вывод сообщения пользователю.
 
 ```text
-> runReader (formatName "алиса") (Config 4 True)
-"    АЛИСА"
-
-> runReader (formatName "алиса") (Config 0 False)
-"алиса"
+Внешний мир ─── try/catch ──→ Either AppError ──→ case ... of Left/Right
+IOException                   AppError             паттерн-матчинг
 ```
 
-`Reader` избавляет от «прокидывания» конфигурации через все функции. В главе 12 мы увидим `ReaderT` — трансформер, который комбинирует `Reader` с другими монадами.
+## Обновляем трекер: надёжная обработка ошибок
 
-## Законы монад
-
-Как и `Functor` и `Applicative`, `Monad` подчиняется трём законам. Они гарантируют предсказуемое поведение `>>=`:
-
-### Левая единица
+Объединим всё в обновлённом цикле трекера:
 
 ```haskell
-return a >>= f  ≡  f a
+import Data.IORef
+import Control.Exception (try, IOException)
+
+runTracker :: IO ()
+runTracker = do
+  ref <- newIORef (TaskStore Map.empty)
+  nextIdRef <- newIORef (TaskId 1)
+  loop ref nextIdRef
+
+loop :: IORef TaskStore -> IORef TaskId -> IO ()
+loop storeRef nextIdRef = do
+  putStr "> "
+  input <- getLine
+  case parseCommand input of
+    Left err -> putStrLn ("Ошибка: " <> err)
+    Right cmd -> do
+      result <- executeCommand cmd storeRef nextIdRef
+      case result of
+        Left appErr -> putStrLn (showError appErr)
+        Right msg   -> putStrLn msg
+  loop storeRef nextIdRef
+
+executeCommand
+  :: Command -> IORef TaskStore -> IORef TaskId -> IO (Either AppError String)
+executeCommand (AddCmd title) storeRef nextIdRef = do
+  tid <- readIORef nextIdRef
+  store <- readIORef storeRef
+  let task = Task title "" Medium Todo
+  case addTaskSafe tid task store of
+    Left err -> pure (Left err)
+    Right newStore -> do
+      writeIORef storeRef newStore
+      modifyIORef nextIdRef (\(TaskId n) -> TaskId (n + 1))
+      pure (Right ("Добавлена задача #" <> show tid))
+
+executeCommand (CompleteCmd n) storeRef _ = do
+  store <- readIORef storeRef
+  case completeTaskSafe (TaskId n) store of
+    Left err -> pure (Left err)
+    Right newStore -> do
+      writeIORef storeRef newStore
+      pure (Right ("Задача #" <> show n <> " завершена"))
+
+executeCommand ListCmd storeRef _ = do
+  store <- readIORef storeRef
+  pure (Right (formatTasks (Map.toList (unTaskStore store))))
 ```
 
-Оборачивание значения в `return` и немедленная передача в `f` — то же самое, что просто вызвать `f`.
-
-```text
-> return 5 >>= \x -> Just (x + 1)
-Just 6
-> (\x -> Just (x + 1)) 5
-Just 6
-```
-
-### Правая единица
-
-```haskell
-m >>= return  ≡  m
-```
-
-Передача результата в `return` не меняет вычисление.
-
-```text
-> Just 5 >>= return
-Just 5
-```
-
-### Ассоциативность
-
-```haskell
-(m >>= f) >>= g  ≡  m >>= (\x -> f x >>= g)
-```
-
-Порядок группировки цепочки `>>=` не влияет на результат. Это позволяет свободно рефакторить do-блоки: извлекать подвыражения в отдельные функции и встраивать их обратно.
-
-## Полезные функции из Control.Monad
-
-Модуль `Control.Monad` содержит функции, упрощающие работу с монадами:
-
-```haskell
-mapM  :: Monad m => (a -> m b) -> [a] -> m [b]   -- map + sequence
-mapM_ :: Monad m => (a -> m b) -> [a] -> m ()     -- то же, без результата
-forM  :: Monad m => [a] -> (a -> m b) -> m [b]    -- mapM с перевёрнутыми аргументами
-forM_ :: Monad m => [a] -> (a -> m b) -> m ()
-```
-
-```haskell
-when   :: Monad m => Bool -> m () -> m ()   -- выполнить действие по условию
-unless :: Monad m => Bool -> m () -> m ()   -- выполнить, если условие ложно
-```
-
-```haskell
-join :: Monad m => m (m a) -> m a           -- «сплющить» вложенный контекст
--- join (Just (Just 5))  =  Just 5
--- join (Just Nothing)   =  Nothing
--- join [[1,2], [3,4]]   =  [1,2,3,4]
-```
-
-```haskell
-(>=>) :: Monad m => (a -> m b) -> (b -> m c) -> (a -> m c)  -- композиция Клейсли
-```
-
-Композиция Клейсли `(>=>)` — аналог `(.)` для монадических функций. Она позволяет строить конвейеры:
-
-```haskell
--- Обычная композиция функций:
--- (.)   :: (b -> c) -> (a -> b) -> (a -> c)
-
--- Композиция Клейсли:
--- (>=>) :: (a -> m b) -> (b -> m c) -> (a -> m c)
-
-lookupCity   :: String -> Maybe String  -- найти город по стране
-lookupDept   :: String -> Maybe String  -- найти отдел по городу
-lookupPhone  :: String -> Maybe String  -- найти телефон по отделу
-
--- Конвейер:
-findPhone :: String -> Maybe String
-findPhone = lookupCity >=> lookupDept >=> lookupPhone
-```
+Архитектура следует паттерну **Functional Core, Imperative Shell** из [главы 7](chapter07.md): парсинг и бизнес-логика — чистые функции с `Either`, IO-слой — только `IORef` и перехват исключений, вывод ошибок — чистая функция `showError`.
 
 ## Упражнения
 
-Решения пишите в файле `test/MySolutions.hs`. После каждого упражнения запускайте `stack test`.
+Решения пишите в `test/MySolutions.hs`. Проверяйте: `stack test`.
 
-1. **(Лёгкое)** Модуль `Data.Phonebook` предоставляет вложенную телефонную книгу:
+### Проект ★☆☆
 
-    ```haskell
-    type Phonebook = Map String (Map String String)
-    exampleBook :: Phonebook
-    ```
-
-    Реализуйте функцию `safeLookup`, которая ищет телефон по городу и имени.
-    Используйте `>>=` (не `case`/`do`).
+1. Реализуйте функцию `deleteTaskSafe`, которая удаляет задачу из хранилища. Если задачи с этим `TaskId` нет — возвращает `Left (TaskNotFound ...)`.
 
     ```haskell
-    safeLookup :: String -> String -> Phonebook -> Maybe String
+    deleteTaskSafe :: TaskId -> TaskStore -> Either AppError TaskStore
     ```
 
     ```text
-    > safeLookup "Москва" "Алиса" exampleBook
-    Just "+7-495-111-1111"
-    > safeLookup "Москва" "Неизвестный" exampleBook
-    Nothing
+    > deleteTaskSafe (TaskId 1) exampleStore
+    Right (TaskStore ...)
+
+    > deleteTaskSafe (TaskId 99) exampleStore
+    Left (TaskNotFound (TaskId 99))
     ```
 
-2. **(Среднее)** Реализуйте `safeIndex` и `safeHead`:
+2. Реализуйте функцию `updateTitle`, которая обновляет заголовок задачи. Если задача не найдена — `Left (TaskNotFound ...)`. Если новый заголовок пустой — `Left (InvalidInput "Заголовок не может быть пустым")`.
 
     ```haskell
-    safeIndex :: [a] -> Int -> Maybe a
-    safeHead  :: [a] -> Maybe a
+    updateTitle :: TaskId -> String -> TaskStore -> Either AppError TaskStore
     ```
 
-    Затем используйте `>>=` (или `do`) для `thirdElement`:
+### Проект ★★☆
+
+1. Реализуйте функцию `loadTasksFromFile`, которая читает файл и парсит содержимое. Используйте `try` для перехвата `IOException` и `readMaybe` (из `Text.Read`) для парсинга.
 
     ```haskell
-    thirdElement :: [[a]] -> Maybe a
+    loadTasksFromFile :: FilePath -> IO (Either AppError TaskStore)
     ```
 
-    Функция возвращает третий элемент первого подсписка. Вернёт `Nothing`, если список пуст, первый подсписок пуст или содержит менее трёх элементов.
+    *Подсказка:* перехватите `IOException` через `try`, затем используйте `case` на результате `readMaybe`.
 
-3. **(Среднее)** Модуль `Data.Chess` определяет позицию шахматного коня и функцию всех возможных ходов:
+### Практика ★☆☆
+
+1. Реализуйте функцию `safeDiv`, которая делит два числа. При делении на ноль возвращает `Left`.
 
     ```haskell
-    type KnightPos = (Int, Int)
-    moveKnight :: KnightPos -> [KnightPos]
+    safeDiv :: Int -> Int -> Either String Int
     ```
-
-    Реализуйте `canReachIn`, которая проверяет, может ли конь добраться из одной позиции в другую за ровно `n` ходов:
-
-    ```haskell
-    canReachIn :: Int -> KnightPos -> KnightPos -> Bool
-    ```
-
-    *Подсказка:* используйте `>>=` с `moveKnight` для генерации всех позиций после `n` ходов, затем проверьте `elem`.
 
     ```text
-    > canReachIn 3 (6,2) (6,1)
-    True
-    > canReachIn 3 (6,2) (7,3)
-    False
+    > safeDiv 10 3
+    Right 3
+
+    > safeDiv 10 0
+    Left "Деление на ноль"
     ```
 
-4. **(Продвинутое)** Реализуйте `collatzLog` — вычисление длины последовательности Коллатца с логированием каждого шага через `Writer`:
+2. Реализуйте функцию `parsePriority`, которая превращает строку в `Priority`. Допустимые значения: `"low"`, `"medium"`, `"high"` (без учёта регистра).
 
     ```haskell
-    collatzLog :: Int -> Writer [String] Int
+    parsePriority :: String -> Either String Priority
     ```
-
-    Правила: если число чётное — делим на 2, нечётное — умножаем на 3 и прибавляем 1. Останавливаемся при 1. Каждый шаг записывается в лог через `tell`. Возвращается количество шагов.
 
     ```text
-    > runWriter (collatzLog 6)
-    (8, ["6 → 3","3 → 10","10 → 5","5 → 16","16 → 8","8 → 4","4 → 2","2 → 1"])
+    > parsePriority "high"
+    Right High
+
+    > parsePriority "urgent"
+    Left "Неизвестный приоритет: urgent"
     ```
+
+### Практика ★★☆
+
+1. Реализуйте функцию `chainOperations`, которая последовательно применяет список операций `TaskStore -> Either AppError TaskStore` к начальному хранилищу. При первой ошибке — остановка.
+
+    ```haskell
+    chainOperations :: [TaskStore -> Either AppError TaskStore]
+                    -> TaskStore
+                    -> Either AppError TaskStore
+    ```
+
+    *Подсказка:* используйте рекурсию и `case` на результате каждой операции. Или вспомните функцию `andThen` из этой главы и `foldl`.
 
 ## Заключение
 
-В этой главе мы:
+`Maybe` подходит, когда причина неудачи очевидна из контекста; `Either` несёт информацию об ошибке и позволяет определить собственный ADT ошибок с исчерпывающим `case`. Цепочки операций с `Either` через вложенные `case` многословны — вспомогательная функция `andThen` убирает часть шаблонного кода, а в [главе 12](chapter12.md) мы увидим, что это в точности монадический `>>=`, и `do`-нотация сделает цепочки линейными. Исключения (`try`, `catch`, `throwIO`) живут в `IO` и предназначены для непредсказуемых внешних сбоев; на границе IO их стоит сразу конвертировать в `Either AppError`. Вложенные `case` — главная боль этой главы, и именно они формируют интуицию, которая в будущем поможет понять монады.
 
-- Познакомились с классом типов `Monad` и оператором `>>=` (bind).
-- Разобрали, почему `Applicative` недостаточно для зависимых вычислений.
-- Изучили конкретные монады: `Maybe`, `Either`, список, `Writer`, `Reader`.
-- Освоили `do`-нотацию и её связь с `>>=` через десахаризацию.
-- Увидели `guard` для фильтрации в монаде списка.
-- Познакомились с законами монад и полезными функциями из `Control.Monad`.
-
-`Endo` из `Data.Monoid` — моноид эндоморфизмов (`a -> a`), полезный для config builders и middleware-цепочек. Подробнее — в главе 19.
-
-В следующей главе мы применим монады на практике: разберём монаду `IO` для взаимодействия с внешним миром.
+```admonish tip title="Для углубления"
+- **Haskell Wiki: Error handling** — [wiki.haskell.org/Error](https://wiki.haskell.org/Error) — обзор подходов к ошибкам.
+- **Matt Parsons: Exceptions Best Practices** — [www.fpcomplete.com/haskell/tutorial/exceptions](https://www.fpcomplete.com/haskell/tutorial/exceptions/) — практические рекомендации.
+- **Control.Exception** — [hackage.haskell.org](https://hackage.haskell.org/package/base/docs/Control-Exception.html) — полная документация модуля исключений.
+```

@@ -6,13 +6,13 @@ cabal-version: 1.12
 
 name:           chapter18
 version:        0.1.0.0
-synopsis:       Haskell by Example — Глава 18: Веб-приложение с базой данных
+synopsis:       Haskell by Example — Глава 18: DSL и парсеры (megaparsec)
 license:        MIT
 build-type:     Simple
 
 library
   exposed-modules:
-      Data.Todo
+      TaskTracker
   other-modules:
       Paths_chapter18
   hs-source-dirs:
@@ -22,25 +22,21 @@ library
       DeriveGeneric
       DerivingStrategies
       GeneralizedNewtypeDeriving
+      DeriveFunctor
+      DeriveFoldable
+      DeriveTraversable
+      LambdaCase
       ScopedTypeVariables
       TypeApplications
+      NamedFieldPuns
+      RecordWildCards
+      TupleSections
+      NumericUnderscores
       ImportQualifiedPost
-      TemplateHaskell
-      QuasiQuotes
-      TypeFamilies
-      StandaloneDeriving
-      UndecidableInstances
-      DataKinds
-      FlexibleInstances
-      MultiParamTypeClasses
-      GADTs
-      FlexibleContexts
-      TypeOperators
   build-depends:
       base >=4.18 && <5
-    , monad-logger
-    , persistent
-    , persistent-sqlite
+    , containers
+    , megaparsec
     , text
   default-language: Haskell2010
 
@@ -57,25 +53,21 @@ test-suite chapter18-tests
       DeriveGeneric
       DerivingStrategies
       GeneralizedNewtypeDeriving
+      DeriveFunctor
+      DeriveFoldable
+      DeriveTraversable
+      LambdaCase
       ScopedTypeVariables
       TypeApplications
+      NamedFieldPuns
+      RecordWildCards
+      TupleSections
+      NumericUnderscores
       ImportQualifiedPost
-      TemplateHaskell
-      QuasiQuotes
-      TypeFamilies
-      StandaloneDeriving
-      UndecidableInstances
-      DataKinds
-      FlexibleInstances
-      MultiParamTypeClasses
-      GADTs
-      FlexibleContexts
-      TypeOperators
   build-depends:
       base >=4.18 && <5
     , chapter18
     , hspec
-    , persistent
-    , persistent-sqlite
+    , megaparsec
     , text
   default-language: Haskell2010

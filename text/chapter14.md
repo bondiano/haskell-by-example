@@ -1,434 +1,448 @@
-# Генеративное тестирование
+# JSON и сериализация
 
-## Цели главы
+В предыдущих главах мы изучили `Functor`, `Applicative` ([глава 11](chapter11.md)), `Monad` ([глава 12](chapter12.md)) и трансформеры ([глава 13](chapter13.md)). Теперь пора применить эти абстракции на практике. Здесь мы познакомимся с библиотекой **aeson** — стандартным инструментом для работы с JSON в Haskell. Пройдём весь путь: от типа `Value` и ручных инстансов `ToJSON`/`FromJSON` до автоматической деривации через `DeriveGeneric`. По ходу дела увидим `Applicative` в действии — парсинг JSON построен на `<$>` и `<*>`. К концу главы трекер задач научится сохранять состояние между запусками.
 
-В этой главе мы познакомимся с **генеративным тестированием** (property-based testing) — подходом, при котором свойства программы проверяются на сотнях случайно сгенерированных входов. Мы изучим библиотеку **QuickCheck**, научимся писать свойства, генераторы и пользовательские экземпляры `Arbitrary`.
+## Зачем JSON
 
-## Структура проекта
+JSON (JavaScript Object Notation) — универсальный формат обмена данными. Когда программа должна сохранить данные на диск, принять запрос от веб-клиента или обменяться данными с внешним сервисом — JSON первый кандидат. В Haskell стандартная библиотека для работы с JSON — **aeson** (произносится «эйсон»).
 
-Откройте директорию `exercises/chapter14`:
+```admonish tip title="Знакомый аналог"
+**JavaScript:** `JSON.parse()` / `JSON.stringify()` — встроенные функции.
+**Python:** модуль `json` — `json.loads()` / `json.dumps()`.
+**Rust:** `serde` + `serde_json` — деривация `Serialize`/`Deserialize`.
+aeson ближе всего к подходу Rust: сериализация/десериализация определяется через классы типов (аналог трейтов).
+```
+
+## Библиотека aeson
+
+### Тип `Value`
+
+В основе aeson лежит тип `Value`, представляющий произвольный JSON-документ:
+
+```haskell
+data Value
+  = Object Object     -- {"key": value, ...}
+  | Array  Array       -- [value, ...]
+  | String Text        -- "строка"
+  | Number Scientific  -- 42, 3.14
+  | Bool   Bool        -- true, false
+  | Null               -- null
+```
+
+Это алгебраический тип — сумма шести конструкторов. `Object` внутри — это `HashMap Text Value`, `Array` — `Vector Value`. Работать с `Value` напрямую неудобно, поэтому aeson предлагает два класса типов: `ToJSON` и `FromJSON`.
+
+### Зависимости
+
+Добавьте в `package.yaml`:
+
+```yaml
+dependencies:
+  - base >= 4.18 && < 5
+  - aeson
+  - text
+  - bytestring
+```
+
+Импорты:
+
+```haskell
+import Data.Aeson (ToJSON, FromJSON, toJSON, parseJSON, encode,
+                   decode, eitherDecode, object, (.=), (.:), (.:?),
+                   (.!=), withObject, Value(..))
+import Data.Text (Text)
+import Data.ByteString.Lazy qualified as BL
+```
+
+## Кодирование: ToJSON
+
+Класс `ToJSON` описывает, как превратить значение Haskell в JSON:
+
+```haskell
+class ToJSON a where
+  toJSON :: a -> Value
+
+encode :: ToJSON a => a -> BL.ByteString
+```
+
+Для построения JSON-объектов aeson предоставляет оператор `(.=)` и функцию `object`:
+
+```haskell
+(.=) :: ToJSON v => Text -> v -> Pair
+object :: [Pair] -> Value
+```
 
 ```text
-chapter14/
-├── package.yaml
-├── src/
-│   └── Data/
-│       ├── MergeSort.hs     ← сортировка слиянием
-│       ├── BST.hs           ← бинарное дерево поиска
-│       └── Person.hs        ← тип Person + кодирование
-├── test/
-│   ├── Spec.hs              ← тесты (запускают ваши свойства)
-│   └── MySolutions.hs       ← ваши решения
-└── no-peeking/
-    └── Solutions.hs          ← эталонные решения
+> encode (object ["name" .= ("Alice" :: Text), "age" .= (30 :: Int)])
+"{\"name\":\"Alice\",\"age\":30}"
 ```
 
-В этой главе модули в `src/` предоставляют функции, которые вы будете **тестировать**, а не реализовывать. Ваша задача — написать свойства и генераторы в `MySolutions.hs`.
-
-## От примеров к свойствам
-
-В предыдущих главах мы писали тесты вида:
-
-```haskell
-it "mergeSort [3,1,2] == [1,2,3]" $
-  mergeSort [3, 1, 2] `shouldBe` [1, 2, 3]
-```
-
-Такой тест проверяет **один конкретный пример**. Но корректность сортировки — это не конечный набор пар «вход → выход», а **свойство**, которое должно выполняться для _любого_ списка:
-
-- Результат упорядочен.
-- Длина не изменилась.
-- Повторная сортировка не меняет результат.
-
-**Генеративное тестирование** (property-based testing) — это подход, при котором вы формулируете такие свойства, а фреймворк сам генерирует сотни случайных входов и проверяет, что свойство выполняется для каждого из них.
-
-QuickCheck — первая библиотека, реализовавшая этот подход. Она была создана Класом Клаессоном и Джоном Хьюзом в 2000 году именно для Haskell, а затем портирована на десятки языков, включая PureScript, Erlang, Scala и Python.
-
-## Быстрый старт с QuickCheck
-
-Запустите GHCi из директории `exercises/chapter14`:
+aeson уже определяет `ToJSON` для стандартных типов:
 
 ```text
-$ cd exercises/chapter14
-$ stack ghci --test
+> encode True
+"true"
+> encode (42 :: Int)
+"42"
+> encode [1, 2, 3 :: Int]
+"[1,2,3]"
+> encode (Nothing :: Maybe Int)
+"null"
+> encode (Just 42 :: Maybe Int)
+"42"
 ```
 
-Флаг `--test` загружает и тестовые модули, давая доступ к `Test.QuickCheck`.
+`Nothing` кодируется как `null`, а `Just x` — как `x` без обёртки.
 
-Попробуем проверить простое свойство — обращение списка дважды возвращает исходный список:
+## Декодирование: FromJSON
+
+Класс `FromJSON` описывает обратное преобразование:
+
+```haskell
+class FromJSON a where
+  parseJSON :: Value -> Parser a
+```
+
+Метод `parseJSON` возвращает `Parser a` — монаду, способную сообщить об ошибке. Для декодирования байтовой строки есть две функции:
+
+```haskell
+decode       :: FromJSON a => BL.ByteString -> Maybe a
+eitherDecode :: FromJSON a => BL.ByteString -> Either String a
+```
 
 ```text
-> import Test.QuickCheck
-> quickCheck (\xs -> reverse (reverse xs) == (xs :: [Int]))
-+++ OK, passed 100 tests.
+> decode "[1,2,3]" :: Maybe [Int]
+Just [1,2,3]
+> eitherDecode "invalid" :: Either String [Int]
+Left "Error in $: not enough input"
 ```
 
-QuickCheck сгенерировал 100 случайных списков `[Int]` и убедился, что свойство выполняется для каждого. Попробуем заведомо ложное свойство:
+```admonish warning title="Всегда используйте eitherDecode"
+Функция `decode` возвращает `Nothing` при ошибке, теряя информацию о причине. Используйте `eitherDecode` — она возвращает сообщение об ошибке в `Left`, что критически важно для отладки.
+```
+
+### Операторы для извлечения полей
+
+Внутри `parseJSON` для доступа к полям JSON-объекта используются:
+
+```haskell
+(.:)  :: FromJSON a => Object -> Text -> Parser a          -- обязательное поле
+(.:?) :: FromJSON a => Object -> Text -> Parser (Maybe a)  -- необязательное поле
+(.!=) :: Parser (Maybe a) -> a -> Parser a                 -- значение по умолчанию
+```
+
+- `o .: "name"` — извлечь обязательное поле; ошибка если отсутствует.
+- `o .:? "priority"` — вернуть `Nothing` если поле отсутствует.
+- `o .:? "priority" .!= Medium` — подставить значение по умолчанию.
+
+```admonish tip title="Знакомый аналог"
+**TypeScript:** `(.:)` ~ `obj.name`, `(.:?)` ~ `obj?.name` (optional chaining).
+**Python:** `(.:)` ~ `obj["name"]` (KeyError при отсутствии), `(.:?)` ~ `obj.get("name")`.
+```
+
+## Автоматическая деривация
+
+aeson поддерживает автоматическую деривацию через `GHC.Generics`:
+
+```haskell
+{-# LANGUAGE DeriveGeneric #-}
+import GHC.Generics (Generic)
+
+data Priority = Low | Medium | High
+  deriving (Show, Eq, Ord, Generic)
+
+instance ToJSON Priority
+instance FromJSON Priority
+```
+
+Инстансы объявлены **без тела** — aeson генерирует реализации автоматически, анализируя структуру типа через `Generic`.
 
 ```text
-> quickCheck (\xs -> reverse xs == (xs :: [Int]))
-*** Failed! Falsifiable (after 3 tests and 3 shrinks):
-[0,1]
+> encode High
+"\"High\""
+> decode "\"Medium\"" :: Maybe Priority
+Just Medium
 ```
 
-QuickCheck нашёл контрпример `[0, 1]` — список, который не равен своему обращению. Обратите внимание на **«3 shrinks»** — QuickCheck не просто нашёл ошибку, а **упростил** контрпример до минимального.
-
-## Свойства
-
-Свойство (property) — это функция, которая принимает произвольные аргументы и возвращает результат, проверяемый QuickCheck. Самый простой вариант — функция, возвращающая `Bool`:
+Для записей имена полей становятся ключами JSON:
 
 ```haskell
-prop_reverseReverse :: [Int] -> Bool
-prop_reverseReverse xs = reverse (reverse xs) == xs
+data Task = Task
+  { taskTitle       :: Text
+  , taskDescription :: Text
+  , taskPriority    :: Priority
+  , taskStatus      :: Status
+  } deriving (Show, Eq, Generic)
+
+instance ToJSON Task
+instance FromJSON Task
 ```
-
-По соглашению имена свойств начинаются с `prop_`.
-
-### Тип Property
-
-Для более сложных проверок используется тип `Property`. Он позволяет добавлять условия, классификацию и пользовательские генераторы:
-
-```haskell
-prop_headOfSorted :: [Int] -> Property
-prop_headOfSorted xs =
-  not (null xs) ==>          -- предусловие: список непуст
-    head (mergeSort xs) == minimum xs
-```
-
-Оператор `(==>)` задаёт **предусловие**: QuickCheck отбрасывает входы, для которых условие не выполняется, и считает только те, для которых выполняется. Используйте его с осторожностью — если предусловие слишком строгое, QuickCheck может не набрать достаточно тестов.
-
-### Классификация: classify и label
-
-Функция `classify` помечает тесты категориями, а `label` задаёт произвольную метку:
-
-```haskell
-prop_sortLength :: [Int] -> Property
-prop_sortLength xs =
-  classify (null xs) "пустой список" $
-  classify (length xs > 10) "длинный список" $
-    length (mergeSort xs) == length xs
-```
-
-При запуске QuickCheck покажет распределение:
 
 ```text
-+++ OK, passed 100 tests:
-  5% пустой список
- 22% длинный список
+> encode (Task "Изучить aeson" "" High Todo)
+"{\"taskTitle\":\"Изучить aeson\",\"taskDescription\":\"\",\"taskPriority\":\"High\",\"taskStatus\":\"Todo\"}"
 ```
 
-Это помогает убедиться, что тесты покрывают разнообразные случаи, а не проверяют одно и то же.
+Это удобно для внутренних форматов, но для внешних API обычно нужны другие имена ключей.
 
-### Покрытие: cover
+## Ручные экземпляры
 
-Функция `cover` идёт дальше — она **требует** определённый минимум покрытия:
+Когда нужно переименовать поля, добавить умолчания или изменить формат — пишутся ручные инстансы.
+
+### Ручной ToJSON
 
 ```haskell
-prop_sortCoverage :: [Int] -> Property
-prop_sortCoverage xs =
-  cover 10 (length xs > 5) "список длиннее 5" $
-    sorted (mergeSort xs)
+instance ToJSON Task where
+  toJSON Task{..} = object
+    [ "title"       .= taskTitle
+    , "description" .= taskDescription
+    , "priority"    .= taskPriority
+    , "status"      .= taskStatus
+    ]
 ```
 
-Если менее 10% тестов попадают в категорию «список длиннее 5», QuickCheck сообщит об ошибке покрытия.
-
-## Генераторы: тип Gen
-
-Сердце QuickCheck — монада `Gen`. Она описывает **стратегию генерации** случайных значений. Вот основные комбинаторы:
-
-| Комбинатор | Тип | Описание |
-|-----------|-----|----------|
-| `choose` | `(a, a) -> Gen a` | Случайное значение из диапазона |
-| `elements` | `[a] -> Gen a` | Случайный элемент из списка |
-| `oneof` | `[Gen a] -> Gen a` | Случайный выбор из генераторов (равновероятно) |
-| `frequency` | `[(Int, Gen a)] -> Gen a` | Выбор с весами |
-| `listOf` | `Gen a -> Gen [a]` | Список случайной длины |
-| `vectorOf` | `Int -> Gen a -> Gen [a]` | Список фиксированной длины |
-| `sized` | `(Int -> Gen a) -> Gen a` | Доступ к параметру размера |
-
-`Gen` — монада, поэтому генераторы комбинируются через `do`-нотацию, `<$>` и `<*>`:
+### Ручной FromJSON
 
 ```haskell
--- Генератор пары (имя, возраст)
-genNameAge :: Gen (String, Int)
-genNameAge = do
-  name <- elements ["Алиса", "Боб", "Чарли"]
-  age  <- choose (1, 100)
-  pure (name, age)
+instance FromJSON Task where
+  parseJSON = withObject "Task" $ \o -> Task
+    <$> o .:  "title"
+    <*> o .:  "description"
+    <*> o .:? "priority" .!= Medium
+    <*> o .:? "status"   .!= Todo
 ```
 
-Или в аппликативном стиле:
+Разберём по частям:
 
-```haskell
-genNameAge :: Gen (String, Int)
-genNameAge = (,)
-  <$> elements ["Алиса", "Боб", "Чарли"]
-  <*> choose (1, 100)
-```
-
-### Генератор отсортированного списка
-
-Генерировать данные с определённой структурой — частая задача. Например, отсортированный список:
-
-```haskell
-genSortedList :: Gen [Int]
-genSortedList = sort <$> listOf arbitrary
-```
-
-Здесь `arbitrary` — генератор из класса типов `Arbitrary` (о нём ниже), а `sort` из `Data.List` сортирует полученный список.
-
-### forAll: подключение генератора к свойству
-
-Функция `forAll` связывает пользовательский генератор со свойством:
-
-```haskell
-forAll :: (Show a, Testable prop) => Gen a -> (a -> prop) -> Property
-```
-
-Пример — проверка, что голова отсортированного непустого списка не больше последнего элемента:
-
-```haskell
-prop_sortedHeadLast :: Property
-prop_sortedHeadLast =
-  forAll (listOf1 arbitrary :: Gen [Int]) $ \xs ->
-    let s = mergeSort xs
-    in head s <= last s
-```
-
-`listOf1` генерирует непустые списки, а `forAll` встраивает генератор в свойство. Если свойство нарушится, QuickCheck покажет сгенерированное значение.
-
-## Arbitrary: класс типов для генерации
-
-Класс `Arbitrary` — основной способ определить «стандартный» генератор для типа:
-
-```haskell
-class Arbitrary a where
-  arbitrary :: Gen a
-  shrink    :: a -> [a]
-  shrink _ = []    -- по умолчанию: не сжимать
-```
-
-Для базовых типов (`Int`, `Bool`, `Char`, `[a]`, `Maybe a`, `(a, b)`, ...) экземпляры `Arbitrary` уже определены. Это позволяет писать свойства вроде:
-
-```haskell
-prop_reverseReverse :: [Int] -> Bool
-```
-
-QuickCheck автоматически вызывает `arbitrary @[Int]` для генерации аргументов.
-
-### Написание собственного Arbitrary
-
-Для пользовательских типов нужно определить экземпляр вручную. Предположим, у нас есть тип `Color`:
-
-```haskell
-data Color = Red | Green | Blue deriving (Show, Eq)
-
-instance Arbitrary Color where
-  arbitrary = elements [Red, Green, Blue]
-```
-
-Для более сложных типов используйте комбинаторы `Gen`:
-
-```haskell
-data Rect = Rect
-  { rectWidth  :: Double
-  , rectHeight :: Double
-  } deriving (Show)
-
-instance Arbitrary Rect where
-  arbitrary = Rect
-    <$> (getPositive <$> arbitrary)  -- только положительные
-    <*> (getPositive <$> arbitrary)
-```
-
-`Positive` — один из модификаторов QuickCheck (`Test.QuickCheck.Modifiers`), генерирующий только положительные числа.
-
-## Shrinking: минимизация контрпримеров
-
-Когда QuickCheck находит вход, нарушающий свойство, он пытается **упростить** его — найти минимальный контрпример. Этот процесс называется shrinking.
-
-Метод `shrink` класса `Arbitrary` возвращает список «упрощённых» вариантов значения. Например, для списка `[3, 1, 4]` функция `shrink` может вернуть:
+1. `withObject "Task"` — проверяет, что значение — JSON-объект; иначе ошибка.
+2. `\o -> ...` — лямбда, получающая объект `o`.
+3. `Task <$> ... <*> ...` — **аппликативный парсинг**.
+4. `o .:? "priority" .!= Medium` — необязательное поле со значением по умолчанию.
 
 ```text
-> shrink [3, 1, 4]
-[[1,4],[3,4],[3,1],[0,1,4],[2,1,4],[3,0,4],[3,1,0],[3,1,2],[3,1,3]]
+> eitherDecode "{\"title\":\"Тест\",\"description\":\"\"}" :: Either String Task
+Right (Task {taskTitle = "Тест", taskDescription = "", taskPriority = Medium, taskStatus = Todo})
 ```
 
-QuickCheck рекурсивно пробует каждый вариант, пока свойство всё ещё нарушается, и выдаёт самый маленький найденный контрпример.
+## Applicative в деле
 
-Для собственных типов shrinking определяется через `shrink`:
+Посмотрите ещё раз на ручной `FromJSON`:
 
 ```haskell
-instance Arbitrary Rect where
-  arbitrary = Rect
-    <$> (getPositive <$> arbitrary)
-    <*> (getPositive <$> arbitrary)
-
-  shrink (Rect w h) =
-    [Rect w' h | Positive w' <- shrink (Positive w)] ++
-    [Rect w h' | Positive h' <- shrink (Positive h)]
+Task
+  <$> o .:  "title"
+  <*> o .:  "description"
+  <*> o .:? "priority" .!= Medium
+  <*> o .:? "status"   .!= Todo
 ```
 
-Если `shrink` не определён, QuickCheck выведет первый найденный контрпример без упрощения.
-
-## Параметр размера
-
-Генераторы в QuickCheck зависят от неявного параметра **размера** (size). По умолчанию QuickCheck постепенно увеличивает размер от 0 до 99 в течение 100 тестов. Это влияет на генерацию:
-
-- `arbitrary @[Int]` генерирует списки длиной до `size`
-- `arbitrary @Int` генерирует числа в диапазоне `[-size, size]`
-
-Комбинатор `sized` даёт доступ к текущему размеру:
+Это **аппликативный стиль** из [главы 11](chapter11.md). Каждый `o .: "field"` возвращает `Parser a`. Цепочка `<$>` и `<*>` собирает результаты в конструктор:
 
 ```haskell
-genSmallList :: Gen [Int]
-genSmallList = sized $ \n -> do
-  k <- choose (0, min n 5)    -- длина не больше 5
-  vectorOf k arbitrary
+--   Task :: Text -> Text -> Priority -> Status -> Task
+--   o .: "title"                  :: Parser Text
+--   o .:? "priority" .!= Medium   :: Parser Priority
+--   Task <$> ... <*> ... <*> ... <*> ...  :: Parser Task
 ```
 
-А `resize` позволяет переопределить размер:
+Если *любой* парсер завершится ошибкой, вся цепочка вернёт ошибку автоматически.
+
+```admonish note title="Applicative из главы 11 в действии"
+Это тот самый `Applicative`, который мы видели на `Maybe` и списках. Здесь он работает на `Parser`, но паттерн тот же: `f <$> x1 <*> x2 <*> ... <*> xN`. aeson — один из самых ярких примеров того, зачем нужен `Applicative` в реальном коде.
+```
+
+## Работа с вложенным JSON
+
+JSON в реальных API часто бывает вложенным. Для декодирования можно смешивать монадический и аппликативный стили:
 
 ```haskell
-genTinyTree :: Gen (BST Int)
-genTinyTree = resize 5 (fromList <$> listOf arbitrary)
+data TaskWithMeta = TaskWithMeta
+  { twmTitle     :: Text
+  , twmCreatedBy :: Text
+  , twmTags      :: [Text]
+  } deriving (Show, Eq)
+
+instance FromJSON TaskWithMeta where
+  parseJSON = withObject "root" $ \root -> do
+    taskObj <- root .: "task"
+    title   <- taskObj .: "title"
+    meta    <- taskObj .: "metadata"
+    TaskWithMeta title
+      <$> meta .: "created_by"
+      <*> meta .:? "tags" .!= []
 ```
 
-## Пример: тестирование бинарного дерева поиска
+`do`-нотация извлекает промежуточные объекты, а аппликативный стиль собирает результат. `Parser` — и `Monad`, и `Applicative`.
 
-Модуль `Data.BST` предоставляет бинарное дерево поиска с операциями `insert`, `member`, `toAscList`, `fromList` и предикатом `valid`. Проверим несколько свойств:
+## Проект: JSON-хранилище для трекера задач
+
+Соберём всё вместе — трекер задач сохраняет и восстанавливает состояние из файла.
 
 ```haskell
--- Построение дерева из списка всегда даёт валидное дерево:
-prop_fromListValid :: [Int] -> Bool
-prop_fromListValid xs = valid (fromList xs)
+{-# LANGUAGE DeriveGeneric #-}
 
--- toAscList возвращает отсортированный список без дубликатов:
-prop_toAscListSorted :: [Int] -> Bool
-prop_toAscListSorted xs = sorted (toAscList (fromList xs))
+import Data.Aeson
+import Data.Text (Text)
+import Data.Set (Set)
+import Data.Set qualified as Set
+import Data.ByteString.Lazy qualified as BL
+import GHC.Generics (Generic)
 
--- Любой элемент из исходного списка находится в дереве:
-prop_fromListMember :: [Int] -> Bool
-prop_fromListMember xs = all (\x -> member x (fromList xs)) xs
+data Priority = Low | Medium | High
+  deriving (Show, Eq, Ord, Generic)
+
+instance ToJSON Priority
+instance FromJSON Priority
+
+data Status = Todo | InProgress | Done
+  deriving (Show, Eq, Ord, Generic)
+
+instance ToJSON Status
+instance FromJSON Status
+
+type Tag = Text
+
+data Task = Task
+  { taskTitle       :: Text
+  , taskDescription :: Text
+  , taskPriority    :: Priority
+  , taskStatus      :: Status
+  , taskTags        :: Set Tag
+  } deriving (Show, Eq, Generic)
+
+instance ToJSON Task where
+  toJSON Task{..} = object
+    [ "title"       .= taskTitle
+    , "description" .= taskDescription
+    , "priority"    .= taskPriority
+    , "status"      .= taskStatus
+    , "tags"        .= Set.toList taskTags
+    ]
+
+instance FromJSON Task where
+  parseJSON = withObject "Task" $ \o -> Task
+    <$> o .:  "title"
+    <*> o .:? "description" .!= ""
+    <*> o .:? "priority"    .!= Medium
+    <*> o .:? "status"      .!= Todo
+    <*> (Set.fromList <$> o .:? "tags" .!= [])
+
+data TaskStore = TaskStore
+  { storeName  :: Text
+  , storeTasks :: [Task]
+  } deriving (Show, Eq, Generic)
+
+instance ToJSON TaskStore
+instance FromJSON TaskStore
+
+saveTaskStore :: FilePath -> TaskStore -> IO ()
+saveTaskStore path store = BL.writeFile path (encode store)
+
+loadTaskStore :: FilePath -> IO (Either String TaskStore)
+loadTaskStore path = eitherDecode <$> BL.readFile path
 ```
 
-Запустим в GHCi:
+В `loadTaskStore` оператор `<$>` применяет `eitherDecode` к результату `IO`-действия — `do`-нотация не нужна.
 
-```text
-> quickCheck prop_fromListValid
-+++ OK, passed 100 tests.
-
-> quickCheck prop_toAscListSorted
-+++ OK, passed 100 tests.
-```
-
-Все 100 случайных списков прошли проверку. Но как убедиться, что среди них были и пустые списки, и длинные? Добавим классификацию:
-
-```text
-> quickCheck $ \xs -> classify (null xs) "пустой" $ prop_fromListValid xs
-+++ OK, passed 100 tests (5% пустой).
-```
-
-## Round-trip тестирование
-
-Частый паттерн в property-based тестах — **round-trip**: кодирование и обратное декодирование должны вернуть исходное значение:
-
-```
-decode (encode x) ≡ Just x
-```
-
-Это универсальное свойство, применимое к JSON-сериализации, парсерам, компрессии и любым парным преобразованиям.
-
-Модуль `Data.Person` предоставляет тип `Person` и функции `encodePerson` / `decodePerson`. Для round-trip теста нужно:
-
-1. Написать генератор `Person`, учитывающий ограничения формата (имя без `';'`).
-2. Сформулировать свойство с помощью `forAll`.
+Пример использования:
 
 ```haskell
-prop_roundTrip :: Property
-prop_roundTrip =
-  forAll genPerson $ \p ->
-    decodePerson (encodePerson p) == Just p
+main :: IO ()
+main = do
+  let store = TaskStore "Мой проект"
+        [ Task "Изучить aeson" "Глава 14" High InProgress
+            (Set.fromList ["haskell"])
+        , Task "Написать тесты" "" Medium Todo Set.empty
+        ]
+  saveTaskStore "tasks.json" store
+  result <- loadTaskStore "tasks.json"
+  case result of
+    Left err     -> putStrLn ("Ошибка: " <> err)
+    Right store' -> print (store == store')  -- True
 ```
 
-Это мощный паттерн: один round-trip тест заменяет десятки ручных примеров.
+### Шпаргалка
 
-## Обзор Hedgehog
-
-**Hedgehog** — альтернативная библиотека для генеративного тестирования в Haskell. Главное отличие — **интегрированный shrinking**: в Hedgehog сжатие встроено в генератор, а не определяется отдельно. Это означает, что если вы написали генератор, сжатие работает автоматически.
-
-```haskell
--- QuickCheck: shrink определяется отдельно
-instance Arbitrary MyType where
-  arbitrary = ...
-  shrink    = ...
-
--- Hedgehog: shrinking встроен в генератор
-genMyType :: Gen MyType
-genMyType = do
-  x <- Gen.int (Range.linear 0 100)  -- shrinking «бесплатно»
-  ...
-```
-
-Hedgehog также предоставляет state-machine тестирование для проверки stateful систем. В этой книге мы работаем с QuickCheck, но Hedgehog стоит изучить для продвинутых задач.
+| Функция / Оператор | Тип | Описание |
+|---|---|---|
+| `encode` | `ToJSON a => a -> BL.ByteString` | Кодировать в JSON |
+| `eitherDecode` | `FromJSON a => BL.ByteString -> Either String a` | Декодировать с ошибками |
+| `object` | `[Pair] -> Value` | Собрать JSON-объект |
+| `(.=)` | `ToJSON v => Text -> v -> Pair` | Пара ключ-значение |
+| `(.:)` | `FromJSON a => Object -> Text -> Parser a` | Обязательное поле |
+| `(.:?)` | `FromJSON a => Object -> Text -> Parser (Maybe a)` | Необязательное поле |
+| `(.!=)` | `Parser (Maybe a) -> a -> Parser a` | Значение по умолчанию |
+| `withObject` | `String -> (Object -> Parser a) -> Value -> Parser a` | Проверить, что это объект |
 
 ## Упражнения
 
-Решения пишите в файле `test/MySolutions.hs`. После каждого упражнения запускайте `stack test`.
+Решения пишите в `test/MySolutions.hs`. Проверяйте: `stack test`.
 
-1. **(Лёгкое)** Реализуйте три свойства функции `mergeSort` из модуля `Data.MergeSort`:
+### Проект ★☆☆
 
-    - `prop_sortPreservesLength` — сортировка не меняет длину списка.
-    - `prop_sortOrdered` — результат сортировки упорядочен (используйте функцию `sorted`).
-    - `prop_sortIdempotent` — повторная сортировка не меняет результат.
-
-    Каждое свойство имеет тип `[Int] -> Bool`.
-
-    *Подсказка:* свойство — это обычная функция. Например:
+1. Определите типы `Priority` и `Status` с деривацией `Generic`, `ToJSON`, `FromJSON`. Проверьте, что `encode` и `decode` работают корректно.
 
     ```haskell
-    prop_sortPreservesLength xs = length (mergeSort xs) == length xs
+    data Priority = Low | Medium | High
+      deriving (Show, Eq, Ord, Generic)
+
+    instance ToJSON Priority
+    instance FromJSON Priority
     ```
 
-2. **(Среднее)** Напишите генератор `genBST :: Gen (BST Int)` для бинарного дерева поиска и два свойства:
+2. Определите тип `Task` с деривацией `Generic` и автоматическими инстансами `ToJSON`/`FromJSON`. Проверьте round-trip: `decode (encode task) == Just task`.
 
-    - `prop_genBSTValid` — все сгенерированные деревья удовлетворяют инварианту BST (используйте `valid` из `Data.BST`).
-    - `prop_insertMember` — после `insert x` элемент `x` находится в дереве (используйте `member`).
+### Проект ★★☆
 
-    Оба свойства должны иметь тип `Property` и использовать `forAll` для подключения генератора.
+3. Напишите **ручные** инстансы `ToJSON` и `FromJSON` для `Task` с короткими ключами (`"title"`, `"priority"`, `"status"`) и значениями по умолчанию: `priority` = `Medium`, `status` = `Todo`. Проверьте, что JSON без `priority` и `status` декодируется:
 
-    *Подсказка:* самый простой генератор BST — `fromList <$> listOf arbitrary`. Для `prop_insertMember` вам понадобится вложенный `forAll`:
+    ```text
+    > eitherDecode "{\"title\":\"Тест\"}" :: Either String Task
+    Right (Task {taskTitle = "Тест", taskPriority = Medium, taskStatus = Todo})
+    ```
+
+### Практика ★☆☆
+
+4. Напишите функцию `encodePerson`, которая кодирует запись `Person` в JSON:
 
     ```haskell
-    forAll genBST $ \bst ->
-      forAll arbitrary $ \x ->
-        ...
+    data Person = Person { personName :: Text, personAge :: Int }
+      deriving (Show, Eq, Generic)
+
+    encodePerson :: Person -> BL.ByteString
+    encodePerson = encode
     ```
 
-3. **(Среднее)** Напишите генератор `genPerson :: Gen Person` и свойство round-trip:
+5. Напишите функцию `decodePerson :: BL.ByteString -> Either String Person` и проверьте round-trip: `decodePerson (encodePerson p) == Right p`.
 
-    - `genPerson` — генератор `Person`. Имя должно состоять из допустимых символов (без `';'`). Используйте `listOf` и `elements` для генерации имени, `chooseInt` для возраста.
-    - `prop_encodeDecodeRoundTrip` — свойство `decodePerson (encodePerson p) == Just p`.
+### Практика ★★☆
 
-    Оба используют `forAll` для связи генератора со свойством.
+6. Напишите `FromJSON` для типа `Config`, который парсит вложенный JSON с необязательными полями:
 
-4. **(Продвинутое)** Напишите свойство `prop_mergeOrdered :: Property`, проверяющее, что функция `merge` из `Data.MergeSort` при слиянии двух отсортированных списков даёт отсортированный результат.
+    ```json
+    {
+      "app": {
+        "name": "MyApp",
+        "settings": { "debug": true, "max_retries": 5 }
+      }
+    }
+    ```
 
-    Требования:
-    - Используйте `forAll` с генератором отсортированного списка (подсказка: `sort <$> listOf arbitrary`).
-    - Добавьте `classify` для отслеживания распределения:
-      - `"один список пуст"` — хотя бы один из входных списков пуст.
-      - `"большой вход"` — суммарная длина списков больше 20.
+    ```haskell
+    data Config = Config
+      { configName :: Text, configDebug :: Bool, configMaxRetries :: Int }
+      deriving (Show, Eq)
+    ```
+
+    Значения по умолчанию: `debug` = `False`, `max_retries` = `3`. JSON без блока `settings` должен декодироваться корректно.
 
 ## Заключение
 
-В этой главе мы:
+Библиотека aeson превращает работу с JSON в типобезопасную операцию. Тип `Value` представляет произвольный JSON, а классы `ToJSON`/`FromJSON` связывают его с типами Haskell. Для внутренних форматов хватает автоматической деривации через `Generic`; для внешних API пишутся ручные инстансы с переименованием полей и значениями по умолчанию. Парсинг через `<$>` и `<*>` — один из самых наглядных примеров `Applicative` в реальном коде.
 
-- Познакомились с генеративным тестированием и библиотекой QuickCheck.
-- Научились формулировать свойства: `Bool`, `Property`, `(==>)`, `classify`, `cover`.
-- Изучили монаду `Gen` и комбинаторы для построения генераторов.
-- Разобрали класс `Arbitrary` и механизм shrinking.
-- Использовали `forAll` для подключения пользовательских генераторов.
-- Познакомились с паттерном round-trip тестирования.
+Эта глава завершает **Часть III: Абстракции**. Мы прошли путь от `Functor` до реального применения `Applicative` в парсинге JSON. В [Части IV](chapter15.md) мы перейдём к реальным приложениям: организация проекта, конкурентность и веб-сервер с базой данных. Абстракции, изученные в Части III, станут фундаментом для всего, что впереди.
 
-Генеративное тестирование — один из самых мощных инструментов в арсенале Haskell-разработчика. Один хорошо сформулированный property-тест может заменить десятки юнит-тестов, находя граничные случаи, о которых вы даже не задумывались.
+```admonish tip title="Для углубления"
+- **Haskell MOOC** — [haskell.mooc.fi](https://haskell.mooc.fi/), лекция 14: обзор aeson и других библиотек.
+- **Документация aeson** — [hackage.haskell.org/package/aeson](https://hackage.haskell.org/package/aeson) — полный API с примерами.
+- **24 Days of Hackage: aeson** — [ocharles.org.uk/blog/posts/2012-12-07-24-days-of-hackage-aeson.html](https://ocharles.org.uk/blog/posts/2012-12-07-24-days-of-hackage-aeson.html) — классическое введение.
+```

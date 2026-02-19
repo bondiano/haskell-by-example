@@ -1,531 +1,508 @@
-# Функции и записи
+# Алгебраические типы и паттерн-матчинг
 
-## Цели главы
-
-В этой главе мы познакомимся с двумя строительными блоками программ на Haskell: функциями и записями (records). Мы создадим простое приложение — адресную книгу — и на его примере разберём:
-
-- Определение типов данных с помощью `data` и `type`.
-- Записи (records) — именованные поля в типах данных.
-- Каррирование и частичное применение функций.
-- Композицию функций с помощью `(.)` и `($)`.
-- Тип `Maybe` для представления необязательных значений.
+В [главе 2](chapter02.md) мы определили базовую модель трекера задач: типы `Priority`, `Status`, `Task` и несколько чистых функций. Теперь углубимся в систему типов Haskell и разберём, как разбирать значения по частям. В центре внимания — сопоставление с образцом (pattern matching), охранные выражения (guards), выражения `case`, алгебраические типы данных (ADT) с их суммами и произведениями, as-паттерны (`@`) и расширение `NamedFieldPuns` для компактной деструктуризации записей. К концу главы мы определим тип `TaskFilter` и реализуем функции `applyFilter` и `filterTasks`.
 
 ## Подготовка проекта
 
-Код этой главы находится в `exercises/chapter03`. Основной модуль — `src/Data/AddressBook.hs`. Он начинается с объявления модуля и импортов:
-
-```haskell
-module Data.AddressBook where
-
-import Data.Maybe (listToMaybe)
-```
-
-Функция `listToMaybe` из модуля `Data.Maybe` нам понадобится позже — она безопасно извлекает первый элемент списка.
-
-Соберите проект:
+Код этой главы находится в `exercises/chapter03`. Соберите проект:
 
 ```text
 $ cd exercises/chapter03
 $ stack build
 ```
 
-## Простые типы
+## Напоминание: типы из главы 2
 
-В Haskell есть набор встроенных типов. Проверим их в GHCi:
-
-```text
-$ stack ghci
-
-> :type 42
-42 :: Num a => a
-
-> :type 42 :: Int
-42 :: Int :: Int
-
-> :type 3.14
-3.14 :: Fractional a => a
-
-> :type "hello"
-"hello" :: String
-
-> :type 'a'
-'a' :: Char
-
-> :type True
-True :: Bool
-```
-
-Обратите внимание: числовые литералы в Haskell полиморфны. `42` — это не `Int` и не `Integer`, а «любой числовой тип». Конкретный тип определяется контекстом использования. Мы можем явно указать тип через аннотацию `:: Int`.
-
-Другие важные типы:
-
-```text
-> :type [1, 2, 3]
-[1, 2, 3] :: Num a => [a]
-
-> :type (True, "hello")
-(True, "hello") :: (Bool, String)
-
-> :type ('a', 1, True)
-('a', 1, True) :: Num b => (Char, b, Bool)
-```
-
-**Списки** `[a]` — однородные коллекции (все элементы одного типа). **Кортежи** `(a, b)` — фиксированного размера, но элементы могут быть разных типов.
-
-## Определение типов
-
-В Haskell есть три способа определить тип:
-
-### `data` — алгебраический тип данных
-
-Создаёт новый тип с одним или несколькими конструкторами:
+В [главе 2](chapter02.md) мы определили:
 
 ```haskell
-data Address = Address
-  { street :: String
-  , city   :: String
-  , state  :: String
+data Priority = Low | Medium | High deriving (Show, Eq, Ord)
+data Status   = Todo | InProgress | Done deriving (Show, Eq, Ord)
+
+data Task = Task
+  { taskTitle       :: String
+  , taskDescription :: String
+  , taskPriority    :: Priority
+  , taskStatus      :: Status
   } deriving (Show, Eq)
+
+type TaskList = [Task]
+newtype TaskId = TaskId Int deriving (Show, Eq, Ord)
 ```
 
-Здесь `Address` — и имя типа (слева от `=`), и имя конструктора (справа). Фигурные скобки задают **записи** (records) — именованные поля. Запись `{ street :: String, city :: String, state :: String }` означает, что у `Address` три поля типа `String`.
+Будем использовать их на протяжении всей главы.
 
-`deriving (Show, Eq)` — автоматическое получение экземпляров классов типов `Show` (вывод на экран) и `Eq` (сравнение). Подробно о классах типов — в главе 6.
+## Сопоставление с образцом (pattern matching)
 
-Определим тип для записи адресной книги:
+Сопоставление с образцом — главный механизм ветвления в Haskell. Вместо цепочек `if/else` мы описываем, как значение *выглядит*, и компилятор выбирает подходящую ветку.
+
+### Литеральные и переменные паттерны
+
+Простейшие паттерны — литералы и переменные:
 
 ```haskell
-data Entry = Entry
-  { firstName :: String
-  , lastName  :: String
-  , address   :: Address
-  } deriving (Show, Eq)
+-- Литеральный паттерн: совпадает с конкретным значением
+isZero :: Int -> Bool
+isZero 0 = True
+isZero _ = False
+
+-- Переменный паттерн: связывает значение с именем
+greet :: String -> String
+greet name = "Привет, " <> name <> "!"
 ```
 
-Записи могут содержать другие записи — поле `address` имеет тип `Address`.
+Символ `_` — **подстановочный паттерн** (wildcard). Он совпадает с любым значением, но не связывает его с именем. Используйте `_`, когда значение вам не нужно.
 
-### `type` — синоним типа
+### Паттерны конструкторов
 
-Создаёт альтернативное имя для существующего типа:
+Конструкторы типов данных — главные «фигуры» в паттерн-матчинге. Вспомним функцию из главы 2:
 
 ```haskell
-type AddressBook = [Entry]
+showPriority :: Priority -> String
+showPriority Low    = "Низкий"
+showPriority Medium = "Средний"
+showPriority High   = "Высокий"
 ```
 
-`AddressBook` и `[Entry]` — один и тот же тип. Синонимы полезны как документация: `AddressBook` читается лучше, чем `[Entry]`.
-
-### `newtype` — обёртка типа
-
-Мы не будем использовать `newtype` в этой главе, но стоит знать: `newtype` создаёт новый тип с одним конструктором и одним полем. В отличие от `type`, `newtype` — это *другой* тип, а не синоним. В отличие от `data`, `newtype` не несёт рантайм-накладных расходов. Мы вернёмся к `newtype` в следующих главах.
-
-## Работа с записями
-
-Haskell автоматически генерирует функции-аксессоры для каждого поля записи. Имя функции совпадает с именем поля:
+Здесь `Low`, `Medium`, `High` — паттерны конструкторов. Каждое уравнение проверяется сверху вниз; выполняется первое совпавшее.
 
 ```text
-> let addr = Address { street = "ул. Пушкина, 10", city = "Москва", state = "Москва" }
-> street addr
-"ул. Пушкина, 10"
-
-> city addr
-"Москва"
+> showPriority High
+"Высокий"
+> showPriority Low
+"Низкий"
 ```
 
-Создадим запись адресной книги:
+```admonish tip title="Знакомый аналог"
+**TypeScript:** `switch (priority) { case 'low': ...; case 'medium': ...; }`.
+**Python:** `match priority: case Priority.LOW: ...` (Python 3.10+ structural pattern matching).
+В Haskell паттерн-матчинг проверяется компилятором на **полноту** — если вы забыли ветку, GHC предупредит.
+```
+
+### Проверка полноты
+
+Если убрать одну из веток, GHC выдаст предупреждение:
 
 ```text
-> let entry = Entry { firstName = "Иван", lastName = "Петров", address = addr }
-> firstName entry
-"Иван"
+> :{
+  showPriority' :: Priority -> String
+  showPriority' Low    = "Низкий"
+  showPriority' Medium = "Средний"
+  :}
 
-> street (address entry)
-"ул. Пушкина, 10"
+<interactive>: warning: [-Wincomplete-patterns]
+    Pattern match(es) are non-exhaustive
+    In an equation for 'showPriority'':
+        Patterns of type 'Priority' not matched: High
 ```
 
-Для доступа к вложенному полю нужно сначала извлечь внешнее: `address entry` возвращает `Address`, а затем `street` извлекает улицу.
+Это одно из главных преимуществ ADT: компилятор *знает* все возможные варианты.
 
-### Обновление записей
+```admonish warning title="Важно"
+Всегда стремитесь к полному сопоставлению. Избегайте универсального `_` в конце, если можете перечислить все конструкторы — так компилятор предупредит вас при добавлении нового конструктора.
+```
 
-Записи в Haskell иммутабельны — мы не изменяем существующую запись, а создаём новую с изменённым полем:
+### Паттерны для списков
+
+Списки тоже разбираются по паттернам. Список `[a]` имеет два конструктора: `[]` (пустой) и `x : xs` (голова и хвост):
+
+```haskell
+-- Количество задач в списке (для демонстрации, обычно используют length)
+describeList :: TaskList -> String
+describeList []    = "Список задач пуст"
+describeList [t]   = "Одна задача: " <> taskTitle t
+describeList (t:_) = "Несколько задач, первая: " <> taskTitle t
+```
 
 ```text
-> let addr2 = addr { city = "Санкт-Петербург" }
-> city addr2
-"Санкт-Петербург"
-
-> city addr
-"Москва"
+> describeList []
+"Список задач пуст"
+> describeList [Task "Тест" "" Medium Todo]
+"Одна задача: Тест"
 ```
 
-Синтаксис `addr { city = "..." }` создаёт копию `addr`, в которой поле `city` заменено на новое значение. Исходный `addr` не изменяется.
+Паттерн `[t]` — синтаксический сахар для `t : []`. Паттерн `(t:_)` совпадает со списком из одного или более элементов.
 
-## Отступы
+## Охранные выражения (guards)
 
-Haskell, как и Python, чувствителен к отступам. Продолжение выражения на следующей строке должно быть с бо́льшим отступом:
+Иногда недостаточно проверить структуру — нужно проверить условие. Для этого существуют **охранные выражения**:
 
 ```haskell
--- Правильно:
-showAddress addr =
-  street addr <> ", " <> city addr <> ", " <> state addr
-
--- Неправильно (ошибка компиляции):
-showAddress addr =
-street addr <> ", " <> city addr
+priorityLabel :: Priority -> String
+priorityLabel p
+  | p == High   = "!!! СРОЧНО !!!"
+  | p == Medium = "Обычный приоритет"
+  | otherwise   = "Низкий приоритет"
 ```
 
-Объявления на одном уровне вложенности должны иметь одинаковый отступ:
+Охранные выражения записываются через `|` после аргументов. `otherwise` — синоним `True`, гарантирующий, что хотя бы одна ветка совпадёт.
+
+Более практичный пример — классификация списка задач по размеру:
 
 ```haskell
--- Правильно:
-let x = 1
-    y = 2
-
--- Неправильно:
-let x = 1
-     y = 2
-```
-
-## Отображение записей
-
-Напишем функции для форматирования записей в строку:
-
-```haskell
-showAddress :: Address -> String
-showAddress addr =
-  street addr <> ", " <> city addr <> ", " <> state addr
-```
-
-Оператор `<>` — конкатенация строк (и не только строк — это метод класса `Semigroup`, но пока достаточно знать, что он склеивает строки).
-
-Функция `showEntry` использует `showAddress` для форматирования полной записи:
-
-```haskell
-showEntry :: Entry -> String
-showEntry entry =
-  lastName entry <> ", " <> firstName entry <> ": " <> showAddress (address entry)
-```
-
-Проверим в GHCi:
-
-```text
-> import Data.AddressBook
-> let addr = Address { street = "ул. Пушкина, 10", city = "Москва", state = "Москва" }
-> showAddress addr
-"ул. Пушкина, 10, Москва, Москва"
-
-> let entry = Entry { firstName = "Иван", lastName = "Петров", address = addr }
-> showEntry entry
-"Петров, Иван: ул. Пушкина, 10, Москва, Москва"
-```
-
-## Создание адресной книги
-
-Пустая адресная книга — это пустой список:
-
-```haskell
-emptyBook :: AddressBook
-emptyBook = []
-```
-
-Для добавления записи используем оператор `:` (cons), который добавляет элемент в начало списка:
-
-```haskell
-insertEntry :: Entry -> AddressBook -> AddressBook
-insertEntry = (:)
-```
-
-Мы определили `insertEntry` через *бесточечный стиль* (point-free): вместо `insertEntry entry book = entry : book` мы просто сказали, что `insertEntry` — это оператор `:`. Мы разберём этот приём подробнее ниже.
-
-Попробуем в GHCi:
-
-```text
-> let book = insertEntry entry emptyBook
-> length book
-1
-
-> let entry2 = Entry { firstName = "Анна", lastName = "Сидорова", address = addr }
-> let book2 = insertEntry entry2 book
-> length book2
-2
-```
-
-Обратите внимание: `insertEntry` не изменяет существующую книгу, а возвращает новую. Это ключевое свойство функционального подхода — данные иммутабельны.
-
-## Каррирование
-
-Все функции в Haskell принимают ровно один аргумент. Функция «двух аргументов» — это функция, которая принимает первый аргумент и возвращает *новую функцию*, ожидающую второй.
-
-Рассмотрим `add`:
-
-```haskell
-add :: Int -> Int -> Int
-add x y = x + y
-```
-
-Стрелка `->` в типе правоассоциативна, поэтому тип `Int -> Int -> Int` читается как `Int -> (Int -> Int)`: функция принимает `Int` и возвращает функцию `Int -> Int`.
-
-Это означает, что мы можем *частично применить* `add`, передав только один аргумент:
-
-```text
-> let addFive = add 5
-> :type addFive
-addFive :: Int -> Int
-
-> addFive 3
-8
-```
-
-`addFive` — это новая функция, которая прибавляет 5 к своему аргументу. Этот механизм называется **каррированием** (currying).
-
-Частичное применение — мощный инструмент. Например, `insertEntry entry` (без второго аргумента) — это функция `AddressBook -> AddressBook`, которая добавляет конкретную запись в любую книгу.
-
-## Замыкания
-
-Когда мы написали `addFive = add 5`, мы создали **замыкание** (closure) — функцию, которая «захватила» значение `5` из окружения. В Haskell *все* функции являются замыканиями: если функция использует переменные из внешней области видимости, они сохраняются вместе с ней.
-
-### Свободные и связанные переменные
-
-В любом выражении переменные делятся на два вида:
-
-- **Связанные** (bound) — те, что вводятся как аргументы функции или в `let`/`where`.
-- **Свободные** (free) — те, что берутся из окружения.
-
-```haskell
-addN :: Int -> (Int -> Int)
-addN n = \x -> x + n
---            ^       ^
---            |       |
---       связанная  свободная (захвачена из addN)
-```
-
-Здесь `x` — связанная переменная (аргумент лямбды), а `n` — свободная (захвачена из параметра `addN`). Результат `addN 5` — замыкание `\x -> x + 5`, в котором `n` зафиксировано как `5`.
-
-### Замыкания и каррирование
-
-Каждое частичное применение создаёт замыкание. Это прямое следствие каррирования:
-
-```haskell
-makeGreeter :: String -> (String -> String)
-makeGreeter greeting = \name -> greeting <> ", " <> name <> "!"
-
-helloGreeter :: String -> String
-helloGreeter = makeGreeter "Hello"
--- helloGreeter "World"  ==>  "Hello, World!"
-```
-
-`helloGreeter` — замыкание, захватившее `greeting = "Hello"`. В Haskell *каждая* функция с более чем одним аргументом работает так благодаря каррированию.
-
-```admonish info title="Знакомый аналог"
-**TypeScript:** `const add = (a: number) => (b: number) => a + b` — замыкание над `a`.
-В TS это привычный паттерн; в Haskell *каждая* функция с несколькими аргументами работает
-именно так (каррирование).
-
-**Python:** `functools.partial(add, 5)` — явное создание замыкания.
-В Haskell частичное применение встроено в язык и не требует специального синтаксиса.
-```
-
-### Thunk'и — ленивые замыкания
-
-В Haskell есть ещё один вид замыканий — **thunk** (санк). Thunk — это отложенное вычисление, которое хранит выражение и его окружение, но не вычисляет результат до тех пор, пока он не понадобится.
-
-```haskell
--- let x = 1 + 2
--- x — это thunk: он «помнит», что нужно сложить 1 и 2,
--- но не делает этого до первого обращения к x.
-```
-
-Thunk'и — основа **ленивых вычислений** (lazy evaluation). Мы подробно разберём их в главе 5.
-
-```admonish warning title="Осторожно: утечки памяти"
-Thunk'и могут накапливаться, если результат не форсируется вовремя — это называется
-**space leak** (утечка памяти). Например, `foldl (+) 0 [1..1000000]` создаёт
-цепочку из миллиона невычисленных thunk'ов. Решение — строгая свёртка `foldl'`.
-Подробнее — в главе 5.
-```
-
-## Поиск в адресной книге
-
-Реализуем функцию поиска по имени и фамилии. Нам понадобятся два инструмента:
-
-- `filter :: (a -> Bool) -> [a] -> [a]` — отбирает элементы, удовлетворяющие предикату.
-- `listToMaybe :: [a] -> Maybe a` — возвращает первый элемент списка или `Nothing`, если список пуст.
-
-### Тип `Maybe`
-
-`Maybe a` представляет значение, которого может не быть:
-
-```haskell
-data Maybe a = Nothing | Just a
-```
-
-- `Nothing` — значения нет (аналог `null`, но безопасный — компилятор не позволит забыть обработать этот случай).
-- `Just x` — значение `x` есть.
-
-```text
-> listToMaybe [1, 2, 3]
-Just 1
-
-> listToMaybe ([] :: [Int])
-Nothing
-```
-
-### Реализация `findEntry`
-
-```haskell
-findEntry :: String -> String -> AddressBook -> Maybe Entry
-findEntry first last = listToMaybe . filter filterEntry
+describeWorkload :: TaskList -> String
+describeWorkload tasks
+  | n == 0    = "Нет задач — можно отдохнуть"
+  | n <= 3    = "Немного задач (" <> show n <> ")"
+  | n <= 10   = "Есть чем заняться (" <> show n <> " задач)"
+  | otherwise = "Завал! " <> show n <> " задач"
   where
-    filterEntry entry = firstName entry == first && lastName entry == last
+    n = length tasks
 ```
-
-Разберём по частям:
-
-1. **Сигнатура** — функция принимает имя, фамилию, адресную книгу и возвращает `Maybe Entry`.
-
-2. **`where`** — вспомогательная функция `filterEntry` определена в блоке `where`. Она имеет доступ к аргументам `first` и `last` из внешней функции.
-
-3. **`filter filterEntry`** — частичное применение: `filter` получает предикат и возвращает функцию `AddressBook -> AddressBook`.
-
-4. **`listToMaybe . filter filterEntry`** — композиция функций. Оператор `(.)` — это и есть композиция, разберём её ниже.
-
-5. **Бесточечный стиль** — аргумент `book` не упоминается явно. Запись `findEntry first last = listToMaybe . filter filterEntry` эквивалентна `findEntry first last book = listToMaybe (filter filterEntry book)`.
-
-Проверим:
 
 ```text
-> findEntry "Иван" "Петров" book
-Just (Entry {firstName = "Иван", lastName = "Петров", ...})
-
-> findEntry "Пётр" "Иванов" book
-Nothing
+> describeWorkload []
+"Нет задач — можно отдохнуть"
+> describeWorkload [Task "A" "" Low Todo, Task "B" "" High InProgress]
+"Немного задач (2)"
 ```
 
-## Инфиксная запись
+Блок `where` вычисляет `n` один раз, и все охранные выражения используют его.
 
-### Обратные кавычки
+```admonish tip title="Знакомый аналог"
+**TypeScript/Python:** `if/else if/else` цепочки.
+Guards в Haskell — декларативная альтернатива: каждое условие — отдельная строка, без вложенности.
+```
 
-Любую функцию двух аргументов можно записать инфиксно, обернув в обратные кавычки:
+## Выражения `case`
+
+Паттерн-матчинг через уравнения функций работает только на верхнем уровне определения. Внутри выражения используйте `case ... of`:
+
+```haskell
+statusEmoji :: Status -> String
+statusEmoji s = case s of
+  Todo       -> "[ ]"
+  InProgress -> "[~]"
+  Done       -> "[x]"
+```
+
+`case` — это **выражение**, а не оператор. Оно возвращает значение и может использоваться внутри других выражений:
+
+```haskell
+formatTaskLine :: Task -> String
+formatTaskLine task =
+  case taskStatus task of
+    Done -> "[x] " <> taskTitle task
+    _    -> "[ ] " <> taskTitle task
+```
 
 ```text
-> mod 8 3
-2
-
-> 8 `mod` 3
-2
-
-> 10 `add` 20
-30
+> formatTaskLine (Task "Купить молоко" "" Low Done)
+"[x] Купить молоко"
+> formatTaskLine (Task "Написать отчёт" "" High Todo)
+"[ ] Написать отчёт"
 ```
 
-### Оператор `($)`
+```admonish note title="Когда использовать case"
+Используйте `case`, когда паттерн-матчинг нужен внутри выражения — например, внутри `where`, `let` или лямбда-функции. На верхнем уровне функции уравнения (equations) часто читаются проще.
+```
 
-Оператор `($)` — это применение функции с низким приоритетом. Он позволяет избавиться от скобок:
+### `LambdaCase`
+
+С расширением `LambdaCase` (включено в нашем проекте) можно писать `case` ещё компактнее:
 
 ```haskell
--- Со скобками:
-showEntry (head (filter filterEntry book))
-
--- С ($):
-showEntry $ head $ filter filterEntry book
+statusEmoji :: Status -> String
+statusEmoji = \case
+  Todo       -> "[ ]"
+  InProgress -> "[~]"
+  Done       -> "[x]"
 ```
 
-`($)` — правоассоциативный оператор с приоритетом 0 (самый низкий). Он определён просто:
+`\case` — это лямбда, принимающая один аргумент и сразу сопоставляющая его с образцами. Удобно при передаче в `map`, `filter` и другие функции высшего порядка:
+
+```text
+> map (\case { High -> "!"; _ -> "." }) [Low, High, Medium, High]
+[".","!",".","!"]
+```
+
+## Алгебраические типы данных: сумма и произведение
+
+Теперь, когда мы умеем разбирать значения, разберёмся с тем, как они устроены.
+
+### Типы-произведения (product types)
+
+Тип-произведение содержит *все* поля одновременно. `Task` — типичный пример:
 
 ```haskell
-($) :: (a -> b) -> a -> b
-f $ x = f x
+data Task = Task
+  { taskTitle       :: String     -- И заголовок
+  , taskDescription :: String     -- И описание
+  , taskPriority    :: Priority   -- И приоритет
+  , taskStatus      :: Status     -- И статус
+  }
 ```
 
-Синтаксической магии нет — `$` просто «отодвигает» правый аргумент, позволяя обойтись без скобок.
+Называется «произведением», потому что множество возможных значений — это *декартово произведение* множеств значений каждого поля.
 
-## Композиция функций
+### Типы-суммы (sum types)
 
-Оператор `(.)` — композиция функций:
+Тип-сумма содержит значение *одного из* конструкторов. `Priority` и `Status` — типы-суммы:
 
 ```haskell
-(.) :: (b -> c) -> (a -> b) -> a -> c
-(f . g) x = f (g x)
+data Priority = Low | Medium | High   -- Low ИЛИ Medium ИЛИ High
+data Status   = Todo | InProgress | Done
 ```
 
-`f . g` — это функция, которая сначала применяет `g`, затем `f` к результату. Это аналог математической записи f ∘ g.
+«Сумма» — потому что количество возможных значений равно *сумме* значений каждого конструктора.
 
-Наша `findEntry` использует композицию:
+### Сочетание суммы и произведения
+
+Сила ADT в том, что суммы и произведения свободно комбинируются. Определим тип для фильтрации задач:
 
 ```haskell
-findEntry first last = listToMaybe . filter filterEntry
+data TaskFilter
+  = ByStatus Status            -- Фильтр по статусу
+  | ByPriority Priority        -- Фильтр по приоритету
+  | ByTitleContains String     -- Фильтр по подстроке в заголовке
+  | AllTasks                   -- Без фильтрации
+  deriving (Show, Eq)
 ```
 
-Читается: «`findEntry` — это композиция фильтрации и взятия первого элемента». Сначала `filter filterEntry` отбирает подходящие записи, затем `listToMaybe` берёт первую (или возвращает `Nothing`).
+`TaskFilter` — тип-сумма, но конструкторы `ByStatus`, `ByPriority` и `ByTitleContains` несут данные (это произведения). Такое сочетание невозможно выразить одним enum в TypeScript или Python — пришлось бы использовать union типы или наследование.
 
-Композиция — один из основных инструментов в Haskell. Она позволяет строить сложные функции из простых «кирпичиков», не упоминая промежуточные данные.
+```admonish tip title="Знакомый аналог"
+**TypeScript:**
+`type TaskFilter = { kind: 'byStatus'; status: Status } | { kind: 'byPriority'; priority: Priority } | { kind: 'byTitle'; title: string } | { kind: 'all' }` — discriminated union.
+**Rust:** `enum TaskFilter { ByStatus(Status), ByPriority(Priority), ... }` — практически идентичный синтаксис.
+В Haskell ADT — фундамент языка, а не надстройка.
+```
 
-### `($)` vs `(.)`
+## Реализация фильтрации задач
 
-- `($)` — **применяет** функцию к значению: `f $ x` = `f x`.
-- `(.)` — **соединяет** две функции в одну: `(f . g) x` = `f (g x)`.
+Реализуем функцию, которая проверяет, удовлетворяет ли задача фильтру:
 
 ```haskell
--- ($) — вычисляет результат
-length $ filter even [1..10]  -- 5
+import Data.List (isInfixOf)
 
--- (.) — создаёт новую функцию
-countEvens :: [Int] -> Int
-countEvens = length . filter even
-
-countEvens [1..10]  -- 5
+applyFilter :: TaskFilter -> Task -> Bool
+applyFilter AllTasks           _    = True
+applyFilter (ByStatus s)       task = taskStatus task == s
+applyFilter (ByPriority p)     task = taskPriority task == p
+applyFilter (ByTitleContains sub) task = sub `isInfixOf` taskTitle task
 ```
 
-## Сопоставление с образцом в записях
+Разберём каждое уравнение:
 
-Помимо функций-аксессоров, к полям записей можно обращаться через сопоставление с образцом. С расширением `NamedFieldPuns` (включённым в нашем проекте) это выглядит компактно:
+1. `AllTasks` — всегда `True`, задача игнорируется (`_`).
+2. `ByStatus s` — конструктор разбирается, `s` связывается со значением `Status`.
+3. `ByPriority p` — аналогично, `p` получает значение `Priority`.
+4. `ByTitleContains sub` — `sub` получает строку-подстроку, `isInfixOf` проверяет вхождение.
+
+Теперь фильтрация списка:
 
 ```haskell
-showEntry :: Entry -> String
-showEntry Entry { firstName, lastName, address } =
-  lastName <> ", " <> firstName <> ": " <> showAddress address
+filterTasks :: TaskFilter -> TaskList -> TaskList
+filterTasks f = filter (applyFilter f)
 ```
 
-Здесь `Entry { firstName, lastName, address }` — образец, который извлекает поля в одноимённые переменные. Это удобнее, чем писать `firstName entry` несколько раз.
+Обратите внимание на частичное применение: `applyFilter f` — это функция `Task -> Bool`, которую мы передаём в `filter`.
+
+```text
+> let tasks = [Task "Купить молоко" "" Low Todo, Task "Написать отчёт" "" High InProgress, Task "Прочитать книгу" "" Medium Done]
+> filterTasks (ByStatus Todo) tasks
+[Task {taskTitle = "Купить молоко", ...}]
+> filterTasks (ByPriority High) tasks
+[Task {taskTitle = "Написать отчёт", ...}]
+> filterTasks (ByTitleContains "Купить") tasks
+[Task {taskTitle = "Купить молоко", ...}]
+```
+
+```admonish note title="Расширяемость"
+Чтобы добавить новый критерий фильтрации, достаточно добавить конструктор в `TaskFilter` и ветку в `applyFilter`. Компилятор подскажет все места, где нужно обработать новый конструктор — это и есть «Making illegal states unrepresentable».
+```
+
+## As-паттерны (@)
+
+Иногда нужно одновременно разобрать значение *и* сохранить его целиком. Для этого существуют as-паттерны:
+
+```haskell
+-- Логировать и вернуть задачу, если она срочная
+logUrgent :: Task -> String
+logUrgent task@Task{taskPriority = High, taskStatus = Todo} =
+  "ВНИМАНИЕ: не начата срочная задача \"" <> taskTitle task <> "\""
+logUrgent task = taskTitle task <> " — всё в порядке"
+```
+
+Конструкция `task@(...)` связывает `task` с *целым* значением, а `Task{taskPriority = High, taskStatus = Todo}` — деструктуризация с проверкой конкретных значений полей.
+
+```text
+> logUrgent (Task "Баг в проде" "" High Todo)
+"ВНИМАНИЕ: не начата срочная задача \"Баг в проде\""
+> logUrgent (Task "Рефакторинг" "" Low InProgress)
+"Рефакторинг — всё в порядке"
+```
+
+As-паттерны работают с любыми типами, не только с записями:
+
+```haskell
+firstAndAll :: [a] -> Maybe (a, [a])
+firstAndAll []       = Nothing
+firstAndAll xs@(x:_) = Just (x, xs)
+```
+
+```text
+> firstAndAll [1, 2, 3]
+Just (1,[1,2,3])
+```
+
+## NamedFieldPuns и деструктуризация записей
+
+В [главе 2](chapter02.md) мы уже видели `NamedFieldPuns`. Разберём подробнее.
+
+### Без NamedFieldPuns
+
+Стандартная деструктуризация записей выглядит так:
+
+```haskell
+showTaskVerbose :: Task -> String
+showTaskVerbose (Task { taskTitle = title, taskPriority = prio, taskStatus = stat }) =
+  "[" <> showPriority prio <> "] " <> title <> " (" <> showStatus stat <> ")"
+```
+
+Каждому полю нужно дать новое имя: `taskTitle = title`. Это многословно.
+
+### С NamedFieldPuns
+
+Расширение `NamedFieldPuns` позволяет опустить правую часть, если имя переменной совпадает с именем поля:
+
+```haskell
+showTaskCompact :: Task -> String
+showTaskCompact Task{taskTitle, taskPriority, taskStatus} =
+  "[" <> showPriority taskPriority <> "] "
+    <> taskTitle
+    <> " (" <> showStatus taskStatus <> ")"
+```
+
+`Task{taskTitle, taskPriority, taskStatus}` — сокращение для `Task{taskTitle = taskTitle, taskPriority = taskPriority, taskStatus = taskStatus}`. Поля становятся локальными переменными.
+
+### RecordWildCards
+
+Ещё радикальнее — расширение `RecordWildCards` с паттерном `{..}`:
+
+```haskell
+showTaskWild :: Task -> String
+showTaskWild Task{..} =
+  "[" <> showPriority taskPriority <> "] "
+    <> taskTitle
+    <> " (" <> showStatus taskStatus <> ")"
+```
+
+`Task{..}` вводит *все* поля записи как локальные переменные. Удобно, но менее явно — используйте с осторожностью.
+
+```admonish warning title="RecordWildCards: осторожно"
+`{..}` импортирует все поля, даже те, которые вы не используете. Это может привести к конфликтам имён и затруднить чтение кода. Предпочитайте `NamedFieldPuns` для явности.
+```
+
+## Комбинирование паттернов
+
+Паттерны можно вкладывать друг в друга. Вот функция, которая находит первую незавершённую срочную задачу — она сочетает паттерн списка, as-паттерн, паттерн записи и guard:
+
+```haskell
+findUrgent :: TaskList -> Maybe Task
+findUrgent [] = Nothing
+findUrgent (task@Task{taskPriority = High, taskStatus = s} : rest)
+  | s /= Done = Just task
+  | otherwise  = findUrgent rest
+findUrgent (_ : rest) = findUrgent rest
+```
+
+```text
+> let tasks = [ Task "Рефакторинг" "" Low Todo
+              , Task "Баг в проде" "" High Todo
+              , Task "Код-ревью" "" High Done ]
+> findUrgent tasks
+Just (Task {taskTitle = "Баг в проде", ...})
+```
+
+Паттерн-матчинг также работает в `let` и `where` — например, для деструктуризации кортежей:
+
+```haskell
+taskSummary :: Task -> String
+taskSummary task =
+  let (label, icon) = case taskStatus task of
+        Todo       -> ("к выполнению", "[ ]")
+        InProgress -> ("в работе",     "[~]")
+        Done       -> ("готово",       "[x]")
+  in icon <> " " <> taskTitle task <> " — " <> label
+```
 
 ## Упражнения
 
 Решения пишите в `test/MySolutions.hs`. Проверяйте: `stack test`.
 
-1. **(Среднее)** Реализуйте функцию `findEntryByStreet`, которая находит запись по названию улицы.
+### Проект ★☆☆
+
+1. Реализуйте функцию `findEntryByStreet`, которая находит запись в адресной книге по названию улицы.
 
     ```haskell
     findEntryByStreet :: String -> AddressBook -> Maybe Entry
     ```
 
-    *Подсказка:* адаптируйте `findEntry` — измените предикат фильтрации. Для доступа к улице нужно сначала извлечь адрес: `street (address entry)`.
+    *Подсказка:* используйте `listToMaybe`, `filter` и доступ к полю `street` через `address`.
 
-2. **(Среднее)** Реализуйте функцию `entryExists`, которая проверяет, есть ли запись с данным именем и фамилией в адресной книге.
+2. Реализуйте функцию `entryExists`, которая проверяет, есть ли запись с заданным именем и фамилией.
 
     ```haskell
     entryExists :: String -> String -> AddressBook -> Bool
     ```
 
-    *Подсказка:* используйте `findEntry` и сопоставление с `Maybe`, или найдите подходящую функцию в `Data.Maybe` / `Data.List` через Hoogle.
+    *Подсказка:* используйте `any` или `findEntry` и проверку на `Nothing`.
 
-3. **(Сложное)** Реализуйте функцию `removeDuplicates`, которая удаляет дубликаты из адресной книги. Дубликатами считаются записи с одинаковыми именем и фамилией (поле `address` игнорируется). Из группы дубликатов сохраняется первый (ближайший к началу списка).
+### Проект ★★☆
+
+3. Реализуйте функцию `removeDuplicates`, которая удаляет дубликаты из адресной книги. Дубликатами считаются записи с одинаковым именем и фамилией. Из группы дубликатов сохраняется первая запись.
 
     ```haskell
     removeDuplicates :: AddressBook -> AddressBook
     ```
 
-    *Подсказка:* найдите функцию `nubBy` в модуле `Data.List` через GHCi (`:type nubBy`) или Hoogle. Она принимает функцию сравнения `a -> a -> Bool` и список.
+    *Подсказка:* найдите функцию `nubBy` в модуле `Data.List` через `:info nubBy` в GHCi.
+
+### Практика ★☆☆
+
+4. Напишите функцию `describeStatus`, которая по `Status` возвращает описание с эмодзи (используйте паттерн-матчинг):
+
+    ```haskell
+    describeStatus :: Status -> String
+    -- describeStatus Todo       = "[ ] К выполнению"
+    -- describeStatus InProgress = "[~] В работе"
+    -- describeStatus Done       = "[x] Готово"
+    ```
+
+5. Напишите функцию `isUrgent`, которая возвращает `True` для задач с приоритетом `High` и статусом, отличным от `Done`. Используйте guards.
+
+    ```haskell
+    isUrgent :: Task -> Bool
+    ```
+
+### Практика ★★☆
+
+6. Напишите функцию `nextStatus`, которая «продвигает» статус задачи: `Todo -> InProgress -> Done -> Done`. Используйте `case`:
+
+    ```haskell
+    nextStatus :: Status -> Status
+    ```
+
+7. Напишите функцию `describeTasks`, которая принимает список задач и возвращает строку вида:
+
+    ```text
+    "3 задач(и), из них 1 срочных (High + не Done)"
+    ```
+
+    ```haskell
+    describeTasks :: TaskList -> String
+    ```
+
+    *Подсказка:* используйте `show`, `length` и `filter` с функцией `isUrgent` из предыдущего упражнения (или напишите условие заново).
 
 ## Заключение
 
-В этой главе мы:
+Паттерн-матчинг — центральный механизм Haskell для работы с данными. Мы разобрали литеральные, переменные и конструкторные паттерны, guards, выражения `case` и `LambdaCase`, as-паттерны (`@`), а также `NamedFieldPuns` и `RecordWildCards` для записей. Алгебраические типы данных — суммы и произведения — позволяют точно моделировать предметную область, а компилятор следит за полнотой сопоставления. В качестве практики мы определили `TaskFilter` и реализовали фильтрацию задач.
 
-- Определили типы данных с записями (`data`, `type`).
-- Познакомились с функциями-аксессорами и обновлением записей.
-- Разобрали каррирование и частичное применение.
-- Узнали, что все функции — замыкания, захватывающие свободные переменные.
-- Познакомились с thunk'ами — ленивыми замыканиями (подробнее в главе 5).
-- Использовали `where` для вспомогательных определений.
-- Освоили композицию `(.)` и оператор `($)`.
-- Познакомились с типом `Maybe` для безопасной обработки отсутствующих значений.
+В [следующей главе](chapter04.md) мы перейдём к спискам, рекурсии и свёрткам — и научимся обрабатывать коллекции задач без явных циклов.
 
-В следующей главе мы подробно разберём сопоставление с образцом и алгебраические типы данных.
+```admonish tip title="Для углубления"
+- **Haskell MOOC** — [haskell.mooc.fi](https://haskell.mooc.fi/), лекции 3–4: pattern matching, рекурсия.
+- **MetaLamp** — [education.metalamp.ru](https://education.metalamp.ru/education/haskell/task-1), задание 2: паттерн-матчинг и типы данных.
+```

@@ -1,41 +1,107 @@
 module Main where
 
+import MySolutions (
+  completeTask,
+  findTaskByTitle,
+  formatTasks,
+  isHighPriority,
+  mkTask,
+  removeDuplicates,
+  taskExists,
+ )
+import TaskTracker
 import Test.Hspec
-import Euler (answer)
-import MySolutions (diagonal, circleArea, collatzLength)
 
 main :: IO ()
 main = hspec $ do
-  describe "Euler — сумма кратных" $ do
-    it "ниже 10 равна 23" $
-      answer 10 `shouldBe` 23
+  describe "mkTask" $ do
+    it "создаёт задачу с заданным заголовком" $
+      taskTitle (mkTask "Тест") `shouldBe` "Тест"
 
-    it "ниже 1000 равна 233168" $
-      answer 1000 `shouldBe` 233168
+    it "устанавливает приоритет Medium" $
+      taskPriority (mkTask "Тест") `shouldBe` Medium
 
-  describe "diagonal" $ do
-    it "диагональ 3×4 равна 5" $
-      diagonal 3 4 `shouldBe` 5.0
+    it "устанавливает статус Todo" $
+      taskStatus (mkTask "Тест") `shouldBe` Todo
 
-    it "диагональ 5×12 равна 13" $
-      diagonal 5 12 `shouldBe` 13.0
+    it "устанавливает пустое описание" $
+      taskDescription (mkTask "Тест") `shouldBe` ""
 
-  describe "circleArea" $ do
-    it "площадь круга с радиусом 1" $
-      circleArea 1 `shouldSatisfy` (\a -> abs (a - pi) < 1e-9)
+  describe "completeTask" $ do
+    it "ставит статус Done" $
+      taskStatus (completeTask (mkTask "Тест")) `shouldBe` Done
 
-    it "площадь круга с радиусом 10" $
-      circleArea 10 `shouldSatisfy` (\a -> abs (a - 100 * pi) < 1e-9)
+    it "не меняет заголовок" $
+      taskTitle (completeTask (mkTask "Тест")) `shouldBe` "Тест"
 
-  describe "collatzLength" $ do
-    it "длина цепочки для 1 равна 0" $
-      collatzLength 1 `shouldBe` 0
+    it "не меняет приоритет" $
+      taskPriority (completeTask (mkTask "Тест")) `shouldBe` Medium
 
-    it "длина цепочки для 2 равна 1" $
-      collatzLength 2 `shouldBe` 1
+    it "не меняет описание" $ do
+      let t = Task "A" "Описание" High InProgress
+      taskDescription (completeTask t) `shouldBe` "Описание"
 
-    it "длина цепочки для 6 равна 8" $
-      collatzLength 6 `shouldBe` 8
+  describe "findTaskByTitle" $ do
+    it "находит существующую задачу" $
+      fmap taskTitle (findTaskByTitle "Написать отчёт" exampleTasks)
+        `shouldBe` Just "Написать отчёт"
 
-    it "длина цепочки для 27 равна 111" $
-      collatzLength 27 `shouldBe` 111
+    it "возвращает первую найденную при дубликатах" $
+      fmap taskDescription (findTaskByTitle "Купить молоко" exampleTasks)
+        `shouldBe` Just "В магазине"
+
+    it "возвращает Nothing для несуществующей задачи" $
+      findTaskByTitle "Не существует" exampleTasks `shouldBe` Nothing
+
+    it "возвращает Nothing для пустого списка" $
+      findTaskByTitle "Тест" [] `shouldBe` Nothing
+
+  describe "taskExists" $ do
+    it "возвращает True для существующей задачи" $
+      taskExists "Написать отчёт" exampleTasks `shouldBe` True
+
+    it "возвращает False для несуществующей задачи" $
+      taskExists "Не существует" exampleTasks `shouldBe` False
+
+    it "возвращает False для пустого списка" $
+      taskExists "Тест" [] `shouldBe` False
+
+  describe "isHighPriority" $ do
+    it "True для High" $
+      isHighPriority (Task "A" "" High Todo) `shouldBe` True
+
+    it "False для Medium" $
+      isHighPriority (Task "A" "" Medium Todo) `shouldBe` False
+
+    it "False для Low" $
+      isHighPriority (Task "A" "" Low Todo) `shouldBe` False
+
+  describe "formatTasks" $ do
+    it "возвращает пустую строку для пустого списка" $
+      formatTasks [] `shouldBe` ""
+
+    it "форматирует одну задачу с переносом строки" $ do
+      let t = mkTask "Тест"
+      formatTasks [t] `shouldBe` show t ++ "\n"
+
+    it "форматирует несколько задач через переносы строк" $ do
+      let t1 = mkTask "A"
+          t2 = mkTask "B"
+      formatTasks [t1, t2] `shouldBe` show t1 ++ "\n" ++ show t2 ++ "\n"
+
+  describe "removeDuplicates" $ do
+    it "удаляет дубликаты по заголовку" $
+      length (removeDuplicates exampleTasks) `shouldBe` 3
+
+    it "сохраняет первое вхождение" $ do
+      let result = removeDuplicates exampleTasks
+      case findTaskByTitle "Купить молоко" result of
+        Just t -> taskDescription t `shouldBe` "В магазине"
+        Nothing -> expectationFailure "Задача не найдена"
+
+    it "не меняет список без дубликатов" $ do
+      let tasks = [mkTask "A", mkTask "B"]
+      removeDuplicates tasks `shouldBe` tasks
+
+    it "возвращает пустой список для пустого входа" $
+      removeDuplicates [] `shouldBe` []

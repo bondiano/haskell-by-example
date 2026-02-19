@@ -1,6 +1,6 @@
 name: chapter07
 version: 0.1.0.0
-synopsis: "Haskell by Example — Глава 7: Аппликативная валидация"
+synopsis: "Haskell by Example — Глава 7: IO: взаимодействие с миром"
 license: MIT
 
 default-extensions:
@@ -22,6 +22,8 @@ default-extensions:
 
 dependencies:
   - base >= 4.18 && < 5
+  - containers
+  - text
 
 library:
   source-dirs: src
@@ -33,3 +35,4 @@ tests:
     dependencies:
       - chapter07
       - hspec
+      - directory

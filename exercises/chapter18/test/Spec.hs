@@ -1,114 +1,170 @@
 module Main where
 
-import Test.Hspec
-import Database.Persist
-import Database.Persist.Sql (toSqlKey)
 import Data.Text (Text)
+import Data.Text qualified as T
+import Test.Hspec
+import Text.Megaparsec (errorBundlePretty, parse)
 
-import Data.Todo
-import MySolutions
+import MySolutions (
+  executeQuery,
+  matchFilter,
+  pFilterExpr,
+  pQuery,
+  parseQuery,
+  prettyQuery,
+ )
+import TaskTracker
 
 main :: IO ()
 main = hspec $ do
-  describe "insertTodo (упражнение 1)" $ do
-    it "вставляет задачу с completed = False" $ withTestDb $ \pool -> do
-      todoId <- runDB pool $ insertTodo "Купить молоко"
-      mTodo <- runDB pool $ get todoId
-      mTodo `shouldBe` Just (Todo "Купить молоко" False)
+  -- Тестовые данные
+  let task1 = Task "Купить молоко" Low Todo ["дом", "покупки"]
+      task2 = Task "Написать отчёт" High InProgress ["работа"]
+      task3 = Task "Полить цветы" Medium Done ["дом"]
+      task4 = Task "Подготовить презентацию" High Todo ["работа", "важное"]
+      task5 = Task "Забрать посылку" Low Done ["дом"]
+      tasks = [task1, task2, task3, task4, task5]
 
-    it "вставляет несколько задач" $ withTestDb $ \pool -> do
-      _ <- runDB pool $ insertTodo "Задача 1"
-      _ <- runDB pool $ insertTodo "Задача 2"
-      _ <- runDB pool $ insertTodo "Задача 3"
-      todos <- runDB pool $ selectList ([] :: [Filter Todo]) []
-      length todos `shouldBe` 3
+  describe "Упражнение 1: pFilterExpr" $ do
+    it "парсит status:done" $
+      parse pFilterExpr "" "status:done"
+        `shouldBe` Right (StatusFilter "done")
 
-    it "возвращает уникальный ключ" $ withTestDb $ \pool -> do
-      id1 <- runDB pool $ insertTodo "Первая"
-      id2 <- runDB pool $ insertTodo "Вторая"
-      id1 `shouldSatisfy` (/= id2)
+    it "парсит status:todo" $
+      parse pFilterExpr "" "status:todo"
+        `shouldBe` Right (StatusFilter "todo")
 
-  describe "toggleTodo (упражнение 2)" $ do
-    it "переключает False -> True" $ withTestDb $ \pool -> do
-      todoId <- runDB pool $ insertTodo "Задача"
-      runDB pool $ toggleTodo todoId
-      mTodo <- runDB pool $ get todoId
-      fmap todoCompleted mTodo `shouldBe` Just True
+    it "парсит status:in-progress" $
+      parse pFilterExpr "" "status:in-progress"
+        `shouldBe` Right (StatusFilter "in-progress")
 
-    it "переключает True -> False" $ withTestDb $ \pool -> do
-      todoId <- runDB pool $ insertTodo "Задача"
-      runDB pool $ toggleTodo todoId
-      runDB pool $ toggleTodo todoId
-      mTodo <- runDB pool $ get todoId
-      fmap todoCompleted mTodo `shouldBe` Just False
+    it "парсит priority:high" $
+      parse pFilterExpr "" "priority:high"
+        `shouldBe` Right (PriorityFilter "high")
 
-    it "не меняет другие задачи" $ withTestDb $ \pool -> do
-      id1 <- runDB pool $ insertTodo "Задача 1"
-      id2 <- runDB pool $ insertTodo "Задача 2"
-      runDB pool $ toggleTodo id1
-      mTodo2 <- runDB pool $ get id2
-      fmap todoCompleted mTodo2 `shouldBe` Just False
+    it "парсит priority:low" $
+      parse pFilterExpr "" "priority:low"
+        `shouldBe` Right (PriorityFilter "low")
 
-    it "ничего не делает для несуществующего ключа" $ withTestDb $ \pool -> do
-      _ <- runDB pool $ insertTodo "Задача"
-      runDB pool $ toggleTodo (toSqlKey 999)
-      todos <- runDB pool $ selectList ([] :: [Filter Todo]) []
-      length todos `shouldBe` 1
+    it "парсит tag:work" $
+      parse pFilterExpr "" "tag:work"
+        `shouldBe` Right (TagFilter "work")
 
-  describe "filteredTodos (упражнение 3)" $ do
-    it "возвращает только завершённые" $ withTestDb $ \pool -> do
-      id1 <- runDB pool $ insertTodo "Задача 1"
-      _ <- runDB pool $ insertTodo "Задача 2"
-      runDB pool $ update id1 [TodoCompleted =. True]
-      done <- runDB pool $ filteredTodos True
-      length done `shouldBe` 1
-      (todoTitle . entityVal . head) done `shouldBe` "Задача 1"
+    it "парсит tag с кириллицей" $
+      parse pFilterExpr "" "tag:работа"
+        `shouldBe` Right (TagFilter "работа")
 
-    it "возвращает только незавершённые" $ withTestDb $ \pool -> do
-      id1 <- runDB pool $ insertTodo "Задача 1"
-      _ <- runDB pool $ insertTodo "Задача 2"
-      runDB pool $ update id1 [TodoCompleted =. True]
-      pending <- runDB pool $ filteredTodos False
-      length pending `shouldBe` 1
-      (todoTitle . entityVal . head) pending `shouldBe` "Задача 2"
+  describe "Упражнение 2: pQuery" $ do
+    it "парсит один фильтр" $
+      parse pQuery "" "status:done"
+        `shouldBe` Right (Query [StatusFilter "done"])
 
-    it "пустой результат, если нет совпадений" $ withTestDb $ \pool -> do
-      _ <- runDB pool $ insertTodo "Задача 1"
-      done <- runDB pool $ filteredTodos True
-      done `shouldBe` []
+    it "парсит два фильтра через пробел" $
+      parse pQuery "" "status:done priority:high"
+        `shouldBe` Right (Query [StatusFilter "done", PriorityFilter "high"])
 
-    it "пустая БД — пустой список" $ withTestDb $ \pool -> do
-      done <- runDB pool $ filteredTodos True
-      done `shouldBe` []
+    it "парсит три фильтра" $
+      parse pQuery "" "status:todo priority:low tag:дом"
+        `shouldBe` Right (Query [StatusFilter "todo", PriorityFilter "low", TagFilter "дом"])
 
-  describe "archiveDone (упражнение 4)" $ do
-    it "удаляет завершённые задачи" $ withTestDb $ \pool -> do
-      id1 <- runDB pool $ insertTodo "Задача 1"
-      _ <- runDB pool $ insertTodo "Задача 2"
-      runDB pool $ update id1 [TodoCompleted =. True]
-      n <- runDB pool archiveDone
-      n `shouldBe` 1
-      todos <- runDB pool $ selectList ([] :: [Filter Todo]) []
-      length todos `shouldBe` 1
+  describe "Упражнение 3: matchFilter" $ do
+    it "StatusFilter \"todo\" совпадает с задачей Todo" $
+      matchFilter (StatusFilter "todo") task1 `shouldBe` True
 
-    it "возвращает 0, если нечего удалять" $ withTestDb $ \pool -> do
-      _ <- runDB pool $ insertTodo "Задача 1"
-      n <- runDB pool archiveDone
-      n `shouldBe` 0
+    it "StatusFilter \"done\" не совпадает с задачей Todo" $
+      matchFilter (StatusFilter "done") task1 `shouldBe` False
 
-    it "сохраняет незавершённые задачи" $ withTestDb $ \pool -> do
-      _ <- runDB pool $ insertTodo "Задача 1"
-      _ <- runDB pool $ insertTodo "Задача 2"
-      _ <- runDB pool archiveDone
-      todos <- runDB pool $ selectList ([] :: [Filter Todo]) []
-      length todos `shouldBe` 2
+    it "StatusFilter \"in-progress\" совпадает с задачей InProgress" $
+      matchFilter (StatusFilter "in-progress") task2 `shouldBe` True
 
-    it "удаляет все, если все завершены" $ withTestDb $ \pool -> do
-      id1 <- runDB pool $ insertTodo "Задача 1"
-      id2 <- runDB pool $ insertTodo "Задача 2"
-      runDB pool $ update id1 [TodoCompleted =. True]
-      runDB pool $ update id2 [TodoCompleted =. True]
-      n <- runDB pool archiveDone
-      n `shouldBe` 2
-      todos <- runDB pool $ selectList ([] :: [Filter Todo]) []
-      length todos `shouldBe` 0
+    it "StatusFilter \"done\" совпадает с задачей Done" $
+      matchFilter (StatusFilter "done") task3 `shouldBe` True
+
+    it "PriorityFilter \"high\" совпадает с High задачей" $
+      matchFilter (PriorityFilter "high") task2 `shouldBe` True
+
+    it "PriorityFilter \"high\" не совпадает с Low задачей" $
+      matchFilter (PriorityFilter "high") task1 `shouldBe` False
+
+    it "PriorityFilter \"low\" совпадает с Low задачей" $
+      matchFilter (PriorityFilter "low") task1 `shouldBe` True
+
+    it "PriorityFilter \"medium\" совпадает с Medium задачей" $
+      matchFilter (PriorityFilter "medium") task3 `shouldBe` True
+
+    it "TagFilter совпадает, если тег присутствует" $
+      matchFilter (TagFilter "работа") task2 `shouldBe` True
+
+    it "TagFilter не совпадает, если тега нет" $
+      matchFilter (TagFilter "работа") task1 `shouldBe` False
+
+    it "TagFilter \"дом\" совпадает с задачей с тегом дом" $
+      matchFilter (TagFilter "дом") task1 `shouldBe` True
+
+  describe "Упражнение 4: prettyQuery" $ do
+    it "печатает один фильтр" $
+      prettyQuery (Query [StatusFilter "done"]) `shouldBe` "status:done"
+
+    it "печатает два фильтра через пробел" $
+      prettyQuery (Query [StatusFilter "done", PriorityFilter "high"])
+        `shouldBe` "status:done priority:high"
+
+    it "печатает TagFilter" $
+      prettyQuery (Query [TagFilter "работа"]) `shouldBe` "tag:работа"
+
+    it "round-trip: parse → prettyQuery → parse" $ do
+      let input = "status:todo priority:high tag:работа"
+      case parse pQuery "" input of
+        Left _ -> expectationFailure "Парсинг не должен был упасть"
+        Right q -> parse pQuery "" (prettyQuery q) `shouldBe` Right q
+
+  describe "Упражнение 5: parseQuery" $ do
+    it "парсит валидный запрос" $
+      parseQuery "status:done" `shouldBe` Right (Query [StatusFilter "done"])
+
+    it "парсит сложный запрос" $
+      parseQuery "priority:high tag:работа"
+        `shouldBe` Right (Query [PriorityFilter "high", TagFilter "работа"])
+
+    it "возвращает ошибку для невалидного ввода" $
+      parseQuery "" `shouldSatisfy` isLeft
+
+    it "возвращает ошибку для мусора" $
+      parseQuery "какой-то мусор" `shouldSatisfy` isLeft
+
+  describe "Упражнение 6: executeQuery" $ do
+    it "фильтрует по статусу done" $
+      executeQuery (Query [StatusFilter "done"]) tasks
+        `shouldBe` [task3, task5]
+
+    it "фильтрует по статусу todo" $
+      executeQuery (Query [StatusFilter "todo"]) tasks
+        `shouldBe` [task1, task4]
+
+    it "фильтрует по приоритету high" $
+      executeQuery (Query [PriorityFilter "high"]) tasks
+        `shouldBe` [task2, task4]
+
+    it "фильтрует по тегу дом" $
+      executeQuery (Query [TagFilter "дом"]) tasks
+        `shouldBe` [task1, task3, task5]
+
+    it "AND-семантика: status:todo И priority:high" $
+      executeQuery (Query [StatusFilter "todo", PriorityFilter "high"]) tasks
+        `shouldBe` [task4]
+
+    it "AND-семантика: status:done И tag:дом" $
+      executeQuery (Query [StatusFilter "done", TagFilter "дом"]) tasks
+        `shouldBe` [task3, task5]
+
+    it "пустой результат при несовместимых фильтрах" $
+      executeQuery (Query [StatusFilter "done", PriorityFilter "high"]) tasks
+        `shouldBe` []
+
+    it "пустой список задач — пустой результат" $
+      executeQuery (Query [StatusFilter "done"]) [] `shouldBe` []
+
+-- | Вспомогательная функция
+isLeft :: Either a b -> Bool
+isLeft (Left _) = True
+isLeft (Right _) = False

@@ -1,6 +1,6 @@
 name: chapter17
 version: 0.1.0.0
-synopsis: "Haskell by Example — Глава 17: Линзы и оптики"
+synopsis: "Haskell by Example — Глава 17: Веб-приложение с БД (Scotty + persistent)"
 license: MIT
 
 default-extensions:
@@ -19,15 +19,16 @@ default-extensions:
   - TupleSections
   - NumericUnderscores
   - ImportQualifiedPost
-  - TemplateHaskell
-  - RankNTypes
 
 dependencies:
   - base >= 4.18 && < 5
-  - lens
 
 library:
   source-dirs: src
+  dependencies:
+    - text
+    - aeson
+    - containers
 
 tests:
   chapter17-tests:
@@ -36,3 +37,6 @@ tests:
     dependencies:
       - chapter17
       - hspec
+      - text
+      - aeson
+      - containers

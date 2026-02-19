@@ -1,41 +1,105 @@
+{-# HLINT ignore "Use sum" #-}
 module Solutions where
 
-import AddressBook
-import Data.IORef
-import Data.Char (toLower)
-import Data.List (isInfixOf)
+import Data.List (foldl')
+import TaskTracker
 
--- Упражнение 1: удаление записи по имени
+-- ============================================================
+-- Упражнение 1: Строгая статистика задач
+-- ============================================================
 
-deleteEntry :: String -> AddressBook -> AddressBook
-deleteEntry name = filter (\e -> entryName e /= name)
+data TaskStats = TaskStats
+  { totalTasks :: !Int
+  , todoCount :: !Int
+  , doneCount :: !Int
+  , highPriority :: !Int
+  }
+  deriving (Show, Eq)
 
--- Упражнение 2: сохранение и загрузка
+{- | Строгая свёртка: foldl' гарантирует, что аккумулятор
+вычисляется на каждом шаге, а строгие поля (!) гарантируют,
+что внутренние значения тоже вычисляются.
+-}
+computeStatsStrict :: [Task] -> TaskStats
+computeStatsStrict = foldl' step (TaskStats 0 0 0 0)
+ where
+  step (TaskStats total todo done high) task =
+    TaskStats
+      (total + 1)
+      (todo + if taskStatus task == Todo then 1 else 0)
+      (done + if taskStatus task == Done then 1 else 0)
+      (high + if taskPriority task == High then 1 else 0)
 
-saveAddressBook :: FilePath -> AddressBook -> IO ()
-saveAddressBook path book = writeFile path (show book)
+-- ============================================================
+-- Упражнение 2: Плохая и хорошая сумма
+-- ============================================================
 
-loadAddressBook :: FilePath -> IO AddressBook
-loadAddressBook path = read <$> readFile path
+-- | Ленивая сумма — копит цепочку невычисленных (+).
+badSum :: [Int] -> Int
+badSum = foldl (+) 0
 
--- Упражнение 3: нечёткий поиск
+-- | Строгая сумма — вычисляет аккумулятор на каждом шаге.
+goodSum :: [Int] -> Int
+goodSum = foldl' (+) 0
 
-fuzzySearch :: String -> AddressBook -> [Entry]
-fuzzySearch query = filter (isMatch . entryName)
-  where
-    q = map toLower query
-    isMatch name = q `isInfixOf` map toLower name
+-- ============================================================
+-- Упражнение 3: Бесконечный список единиц
+-- ============================================================
 
--- Упражнение 4: undo через IORef
+{- | repeat 1 создаёт бесконечный список [1, 1, 1, ...].
+Альтернатива: ones = 1 : ones
+-}
+ones :: [Int]
+ones = repeat 1
 
-recordState :: IORef [AddressBook] -> AddressBook -> IO ()
-recordState ref book = modifyIORef ref (book :)
+-- ============================================================
+-- Упражнение 4: Числа Фибоначчи
+-- ============================================================
 
-undoLastChange :: IORef [AddressBook] -> IO (Maybe AddressBook)
-undoLastChange ref = do
-  history <- readIORef ref
-  case history of
-    (_:prev:rest) -> do
-      writeIORef ref (prev : rest)
-      return (Just prev)
-    _ -> return Nothing
+{- | Классическое ленивое определение через zipWith.
+fibs «ссылается на себя»: Haskell вычисляет элементы
+по мере необходимости, переиспользуя уже вычисленные.
+-}
+fibs :: [Integer]
+fibs = 0 : 1 : zipWith (+) fibs (tail fibs)
+
+-- ============================================================
+-- Упражнение 5: Предсказания ленивости
+-- ============================================================
+
+{- | Ответы:
+  1. head [1, undefined]        → 1     (undefined не нужен)
+  2. head [undefined, 2]        → error (head вычисляет первый элемент)
+  3. head (tail [undefined, 3]) → 3     (tail пропускает, head берёт второй)
+  4. const 1 undefined          → 1     (const игнорирует второй аргумент)
+  5. seq () "ok"                → "ok"  (seq форсирует () — уже в WHNF)
+-}
+predictions :: [String]
+predictions = ["1", "error", "3", "1", "ok"]
+
+-- ============================================================
+-- Упражнение 6: Строгая длина строк
+-- ============================================================
+
+-- | foldl' гарантирует, что аккумулятор вычисляется на каждом шаге.
+totalLengthStrict :: [String] -> Int
+totalLengthStrict = foldl' (\acc s -> acc + length s) 0
+
+-- ============================================================
+-- Упражнение 7: Строгий map
+-- ============================================================
+
+{- | seq форсирует вычисление y до WHNF перед добавлением в список.
+Обычный map оставляет f x невычисленным (как thunk).
+-}
+strictMap :: (a -> b) -> [a] -> [b]
+strictMap _ [] = []
+strictMap f (x : xs) = let y = f x in y `seq` (y : strictMap f xs)
+
+-- ============================================================
+-- Бонус: натуральные числа
+-- ============================================================
+
+-- | Бесконечный список натуральных чисел.
+nats :: [Integer]
+nats = [1 ..]

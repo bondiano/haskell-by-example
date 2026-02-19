@@ -6,15 +6,13 @@ cabal-version: 1.12
 
 name:           chapter16
 version:        0.1.0.0
-synopsis:       Haskell by Example — Глава 16: GADTs и семейства типов
+synopsis:       Haskell by Example — Глава 16: Конкурентность и async
 license:        MIT
 build-type:     Simple
 
 library
   exposed-modules:
-      Data.Container
-      Data.Expr.Typed
-      Data.Vec
+      TaskTracker
   other-modules:
       Paths_chapter16
   hs-source-dirs:
@@ -35,19 +33,11 @@ library
       TupleSections
       NumericUnderscores
       ImportQualifiedPost
-      GADTs
-      DataKinds
-      TypeFamilies
-      KindSignatures
-      StandaloneDeriving
-      RankNTypes
-      TypeOperators
-      UndecidableInstances
-      FlexibleInstances
-      FlexibleContexts
   build-depends:
-      base >=4.18 && <5
+      async
+    , base >=4.18 && <5
     , containers
+    , stm
   default-language: Haskell2010
 
 test-suite chapter16-tests
@@ -74,19 +64,10 @@ test-suite chapter16-tests
       TupleSections
       NumericUnderscores
       ImportQualifiedPost
-      GADTs
-      DataKinds
-      TypeFamilies
-      KindSignatures
-      StandaloneDeriving
-      RankNTypes
-      TypeOperators
-      UndecidableInstances
-      FlexibleInstances
-      FlexibleContexts
   build-depends:
-      base >=4.18 && <5
+      async
+    , base >=4.18 && <5
     , chapter16
-    , containers
     , hspec
+    , stm
   default-language: Haskell2010

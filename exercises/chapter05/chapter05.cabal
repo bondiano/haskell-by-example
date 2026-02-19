@@ -6,13 +6,13 @@ cabal-version: 1.12
 
 name:           chapter05
 version:        0.1.0.0
-synopsis:       Haskell by Example — Глава 5: Рекурсия, map и свёртки
+synopsis:       Haskell by Example — Глава 5: Классы типов
 license:        MIT
 build-type:     Simple
 
 library
   exposed-modules:
-      Data.Path
+      TaskTracker
   other-modules:
       Paths_chapter05
   hs-source-dirs:

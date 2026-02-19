@@ -1,42 +1,146 @@
 module MySolutions where
 
-import AddressBook
-import Data.IORef
-import Data.Char (toLower)
-import Data.List (isInfixOf)
+import Data.List (foldl')
+import TaskTracker
 
--- Упражнение 1: удаление записи по имени
+-- ============================================================
+-- Упражнение 1: Строгая статистика задач
 --
--- Удалить все записи с данным именем.
-
-deleteEntry :: String -> AddressBook -> AddressBook
-deleteEntry = undefined
-
--- Упражнение 2: сохранение и загрузка адресной книги
+-- Определите тип TaskStats со строгими полями (!):
+--   totalTasks   :: !Int  — общее количество задач
+--   todoCount    :: !Int  — количество со статусом Todo
+--   doneCount    :: !Int  — количество со статусом Done
+--   highPriority :: !Int  — количество с приоритетом High
 --
--- Используйте show/read для сериализации и writeFile/readFile для IO.
+-- Реализуйте computeStatsStrict через foldl'.
+-- ============================================================
 
-saveAddressBook :: FilePath -> AddressBook -> IO ()
-saveAddressBook = undefined
+data TaskStats = TaskStats
+  { totalTasks :: !Int
+  , todoCount :: !Int
+  , doneCount :: !Int
+  , highPriority :: !Int
+  }
+  deriving (Show, Eq)
 
-loadAddressBook :: FilePath -> IO AddressBook
-loadAddressBook = undefined
+{- | Вычисление статистики по списку задач.
 
--- Упражнение 3: нечёткий поиск по имени
+>>> computeStatsStrict exampleTasks
+TaskStats {totalTasks = 5, todoCount = 2, doneCount = 2, highPriority = 2}
+-}
+computeStatsStrict :: [Task] -> TaskStats
+computeStatsStrict = undefined
+
+-- ============================================================
+-- Упражнение 2: Плохая и хорошая сумма
 --
--- Регистронезависимый поиск по подстроке в имени.
-
-fuzzySearch :: String -> AddressBook -> [Entry]
-fuzzySearch = undefined
-
--- Упражнение 4: undo через IORef
+-- badSum  — используйте foldl  (ленивый, копит санки).
+-- goodSum — используйте foldl' (строгий, вычисляет сразу).
 --
--- IORef хранит стек состояний [AddressBook] (голова — текущее).
--- recordState — добавить состояние на вершину стека.
--- undoLastChange — убрать текущее и вернуть предыдущее.
+-- На маленьких списках результат одинаковый,
+-- на больших badSum может вызвать переполнение стека.
+-- ============================================================
 
-recordState :: IORef [AddressBook] -> AddressBook -> IO ()
-recordState = undefined
+-- | Ленивая сумма через foldl (не делайте так в реальном коде!).
+badSum :: [Int] -> Int
+badSum = undefined
 
-undoLastChange :: IORef [AddressBook] -> IO (Maybe AddressBook)
-undoLastChange = undefined
+-- | Строгая сумма через foldl'.
+goodSum :: [Int] -> Int
+goodSum = undefined
+
+-- ============================================================
+-- Упражнение 3: Бесконечный список единиц
+--
+-- Определите бесконечный список, состоящий из единиц.
+-- Используйте repeat 1 или рекурсию: ones = 1 : ones.
+-- ============================================================
+
+{- | Бесконечный список единиц.
+
+>>> take 5 ones
+[1,1,1,1,1]
+-}
+ones :: [Int]
+ones = undefined
+
+-- ============================================================
+-- Упражнение 4: Числа Фибоначчи (бесконечный список)
+--
+-- Классическое ленивое определение:
+-- fibs = 0 : 1 : zipWith (+) fibs (tail fibs)
+-- ============================================================
+
+{- | Бесконечный список чисел Фибоначчи.
+
+>>> take 8 fibs
+[0,1,1,2,3,5,8,13]
+-}
+fibs :: [Integer]
+fibs = undefined
+
+-- ============================================================
+-- Упражнение 5: Предсказания ленивости
+--
+-- Определите список строк — ваши предсказания результатов:
+--
+-- predictions !! 0: head [1, undefined]        → ?
+-- predictions !! 1: head [undefined, 2]        → ?
+-- predictions !! 2: head (tail [undefined, 3]) → ?
+-- predictions !! 3: const 1 undefined          → ?
+-- predictions !! 4: seq () "ok"                → ?
+--
+-- Подсказки:
+--   - head берёт только первый элемент
+--   - tail пропускает первый, не вычисляя его
+--   - const игнорирует второй аргумент
+--   - seq форсирует первый аргумент до WHNF
+-- ============================================================
+
+-- | Предсказания результатов ленивых выражений.
+predictions :: [String]
+predictions = undefined
+
+-- ============================================================
+-- Упражнение 6: Строгая длина строк
+--
+-- Вычислите суммарную длину списка строк через foldl'.
+-- ============================================================
+
+{- | Суммарная длина строк (строгое вычисление).
+
+>>> totalLengthStrict ["abc", "de", "f"]
+6
+-}
+totalLengthStrict :: [String] -> Int
+totalLengthStrict = undefined
+
+-- ============================================================
+-- Упражнение 7: Строгий map
+--
+-- Реализуйте map, который форсирует каждый результат
+-- применения функции до WHNF через seq.
+--
+-- strictMap f []     = []
+-- strictMap f (x:xs) = let y = f x in y `seq` (y : strictMap f xs)
+-- ============================================================
+
+{- | Map с принудительным вычислением каждого элемента.
+
+>>> strictMap (+1) [1,2,3]
+[2,3,4]
+-}
+strictMap :: (a -> b) -> [a] -> [b]
+strictMap = undefined
+
+-- ============================================================
+-- Бонус: натуральные числа
+-- ============================================================
+
+{- | Бесконечный список натуральных чисел: 1, 2, 3, ...
+
+>>> take 5 nats
+[1,2,3,4,5]
+-}
+nats :: [Integer]
+nats = undefined

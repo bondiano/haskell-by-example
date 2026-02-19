@@ -1,42 +1,44 @@
 module MySolutions where
 
 import Data.Text (Text)
-import Database.Persist
-import Database.Persist.Sql (SqlPersistT)
+import TaskTracker
 
-import Data.Todo (Todo(..), TodoId, EntityField(..))
+{- | Упражнение 1: Парсер одного фильтра.
+  Разбирает выражения вида "status:done", "priority:high", "tag:work".
+  Используйте Text.Megaparsec.Char.string для ключевых слов
+  и takeWhile1P для значения.
+-}
+pFilterExpr :: Parser FilterExpr
+pFilterExpr = undefined
 
--- Упражнение 1: вставка задачи
---
--- Вставьте новую задачу (Todo) с заданным заголовком и completed = False.
--- Верните ключ (Key Todo) созданной записи.
--- Используйте функцию insert из Database.Persist.
+{- | Упражнение 2: Парсер запроса — несколько фильтров через пробелы.
+  Используйте sepBy1 или some.
+-}
+pQuery :: Parser Query
+pQuery = undefined
 
-insertTodo :: Text -> SqlPersistT IO (Key Todo)
-insertTodo = undefined
+{- | Упражнение 3: Проверка, соответствует ли задача одному фильтру.
+  StatusFilter — сравнение по статусу.
+  PriorityFilter — сравнение по приоритету.
+  TagFilter — проверка, есть ли тег в taskTags.
+-}
+matchFilter :: FilterExpr -> Task -> Bool
+matchFilter = undefined
 
--- Упражнение 2: переключение статуса
---
--- Переключите поле completed задачи с данным ключом.
--- Если задача не найдена — ничего не делайте.
--- Подсказка: используйте get для чтения, update с (=.) для записи.
+{- | Упражнение 4: Красивая печать запроса обратно в текст.
+  Query [StatusFilter "done", TagFilter "work"] -> "status:done tag:work"
+-}
+prettyQuery :: Query -> Text
+prettyQuery = undefined
 
-toggleTodo :: Key Todo -> SqlPersistT IO ()
-toggleTodo = undefined
+{- | Упражнение 5: Обёртка над parse — возвращает Either String Query.
+  Преобразуйте ошибку megaparsec в строку с помощью errorBundlePretty.
+-}
+parseQuery :: Text -> Either String Query
+parseQuery = undefined
 
--- Упражнение 3: фильтрация задач
---
--- Верните все задачи с указанным значением completed.
--- Используйте selectList с фильтром (==.).
-
-filteredTodos :: Bool -> SqlPersistT IO [Entity Todo]
-filteredTodos = undefined
-
--- Упражнение 4: архивация завершённых
---
--- Удалите все завершённые задачи (completed == True).
--- Верните количество удалённых задач.
--- Подсказка: используйте selectList для подсчёта и deleteWhere для удаления.
-
-archiveDone :: SqlPersistT IO Int
-archiveDone = undefined
+{- | Упражнение 6: Фильтрация списка задач по всем фильтрам запроса (AND).
+  Задача проходит, если удовлетворяет каждому фильтру в Query.
+-}
+executeQuery :: Query -> [Task] -> [Task]
+executeQuery = undefined

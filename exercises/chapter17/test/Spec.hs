@@ -1,102 +1,185 @@
 module Main where
 
+import Data.Map.Strict qualified as Map
+import Data.Text (Text)
+import Data.Text qualified as T
 import Test.Hspec
-import Control.Lens (view, over, traversed, (^..))
 
-import Data.Company
 import MySolutions
-
-sampleAddress :: Address
-sampleAddress = Address "Москва" "Тверская" "101000"
-
-samplePerson :: Person
-samplePerson = Person "Иван" 30 sampleAddress
+import TaskTracker
 
 main :: IO ()
 main = hspec $ do
-  describe "getCity (упражнение 1)" $ do
-    it "извлекает город из Person" $
-      getCity samplePerson `shouldBe` "Москва"
+  -- Тестовые данные
+  let todoTask = Task "Купить молоко" Low Todo
+      inProgTask = Task "Написать отчёт" High InProgress
+      doneTask = Task "Полить цветы" Medium Done
+      allTestTasks = [todoTask, inProgTask, doneTask]
 
-  describe "setCity (упражнение 1)" $ do
-    it "устанавливает город" $
-      getCity (setCity "Санкт-Петербург" samplePerson)
-        `shouldBe` "Санкт-Петербург"
+  describe "Упражнение 1: handleCompleteLogic" $ do
+    it "завершает задачу со статусом Todo" $
+      handleCompleteLogic todoTask
+        `shouldBe` Right todoTask{taskStatus = Done}
 
-    it "не меняет другие поля" $ do
-      let updated = setCity "Казань" samplePerson
-      _personName updated `shouldBe` "Иван"
-      _personAge updated `shouldBe` 30
-      _street (_personAddress updated) `shouldBe` "Тверская"
+    it "завершает задачу со статусом InProgress" $
+      handleCompleteLogic inProgTask
+        `shouldBe` Right inProgTask{taskStatus = Done}
 
-  describe "upperName (упражнение 1)" $ do
-    it "переводит имя в верхний регистр" $
-      _personName (upperName samplePerson) `shouldBe` "ИВАН"
+    it "ошибка для уже завершённой задачи" $
+      handleCompleteLogic doneTask
+        `shouldBe` Left "Задача уже выполнена"
 
-    it "не меняет другие поля" $ do
-      let updated = upperName samplePerson
-      _personAge updated `shouldBe` 30
-      getCity updated `shouldBe` "Москва"
+    it "сохраняет название и приоритет" $
+      case handleCompleteLogic todoTask of
+        Right t -> do
+          taskTitle t `shouldBe` "Купить молоко"
+          taskPriority t `shouldBe` Low
+        Left err -> expectationFailure $ "Ожидали Right, получили: " ++ T.unpack err
 
-  describe "raiseSalary (упражнение 2)" $ do
-    it "повышает все зарплаты" $ do
-      let updated = raiseSalary 10000 exampleCompany
-      let salaries = updated ^.. companyDepartments . traversed
-                              . departmentEmployees . traversed
-                              . employeeSalary
-      salaries `shouldBe` [110000, 100000, 95000]
+  describe "Упражнение 2: computeStatsMap" $ do
+    it "считает по статусам" $ do
+      let stats = computeStatsMap allTestTasks
+      Map.lookup "todo" stats `shouldBe` Just 1
+      Map.lookup "in_progress" stats `shouldBe` Just 1
+      Map.lookup "done" stats `shouldBe` Just 1
 
-    it "работает с пустой компанией" $ do
-      let empty' = Company "Empty" []
-      raiseSalary 5000 empty' `shouldBe` Company "Empty" []
+    it "пустой список — пустая карта или нули" $ do
+      let stats = computeStatsMap []
+      Map.findWithDefault 0 "todo" stats `shouldBe` 0
+      Map.findWithDefault 0 "in_progress" stats `shouldBe` 0
+      Map.findWithDefault 0 "done" stats `shouldBe` 0
 
-    it "сохраняет имена" $ do
-      let updated = raiseSalary 1000 exampleCompany
-      let names = updated ^.. companyDepartments . traversed
-                            . departmentEmployees . traversed
-                            . employeeName
-      names `shouldBe` ["Алиса", "Борис", "Вера"]
+    it "несколько задач одного статуса" $ do
+      let tasks = [todoTask, todoTask{taskTitle = "Ещё одна"}, doneTask]
+          stats = computeStatsMap tasks
+      Map.lookup "todo" stats `shouldBe` Just 2
+      Map.lookup "done" stats `shouldBe` Just 1
 
-  describe "rightValues (упражнение 3)" $ do
-    it "извлекает Right-значения" $
-      rightValues [Left "a", Right 1, Left "b", Right 2]
-        `shouldBe` [1, 2]
+  describe "Упражнение 3: paginate" $ do
+    it "первая страница" $
+      paginate 1 3 [1 .. 10 :: Int] `shouldBe` [1, 2, 3]
+
+    it "вторая страница" $
+      paginate 2 3 [1 .. 10 :: Int] `shouldBe` [4, 5, 6]
+
+    it "последняя неполная страница" $
+      paginate 4 3 [1 .. 10 :: Int] `shouldBe` [10]
+
+    it "страница за пределами списка" $
+      paginate 5 3 [1 .. 10 :: Int] `shouldBe` []
 
     it "пустой список" $
-      rightValues [] `shouldBe` []
+      paginate 1 10 ([] :: [Int]) `shouldBe` []
 
-    it "все Left" $
-      rightValues [Left "x", Left "y"] `shouldBe` []
+    it "perPage = 1" $
+      paginate 3 1 [1 .. 5 :: Int] `shouldBe` [3]
 
-    it "все Right" $
-      rightValues [Right 10, Right 20] `shouldBe` [10, 20]
+  describe "Упражнение 4: searchByTitle" $ do
+    it "находит по подстроке" $
+      searchByTitle "молоко" allTestTasks `shouldBe` [todoTask]
 
-  describe "myView (упражнение 4)" $ do
-    it "fstL" $
-      myView fstL (1 :: Int, 'a') `shouldBe` 1
+    it "регистронезависимый поиск" $
+      searchByTitle "МОЛОКО" allTestTasks `shouldBe` [todoTask]
 
-    it "sndL" $
-      myView sndL (1 :: Int, 'a') `shouldBe` 'a'
+    it "находит несколько совпадений" $ do
+      let tasks =
+            [ Task "Haskell задача" Low Todo
+            , Task "Задача по Haskell" High InProgress
+            , Task "Другое" Medium Done
+            ]
+      length (searchByTitle "задач" tasks) `shouldBe` 2
 
-  describe "mySet (упражнение 4)" $ do
-    it "fstL" $
-      mySet fstL 10 (1 :: Int, 'a') `shouldBe` (10, 'a')
+    it "пустой запрос — все задачи" $
+      searchByTitle "" allTestTasks `shouldBe` allTestTasks
 
-    it "sndL" $
-      mySet sndL 'z' (1 :: Int, 'a') `shouldBe` (1, 'z')
+    it "нет совпадений" $
+      searchByTitle "xyz123" allTestTasks `shouldBe` []
 
-  describe "myOver (упражнение 4)" $ do
-    it "fstL" $
-      myOver fstL (+ 1) (1 :: Int, 'a') `shouldBe` (2, 'a')
+  describe "Упражнение 5: validatePriority" $ do
+    it "нормализует HIGH → high" $
+      validatePriority "HIGH" `shouldBe` Right "high"
 
-    it "sndL" $
-      myOver sndL (const 'z') (1 :: Int, 'a') `shouldBe` (1, 'z')
+    it "нормализует Low → low" $
+      validatePriority "Low" `shouldBe` Right "low"
 
-  describe "композиция MyLens (упражнение 4)" $ do
-    it "sndL . fstL — доступ к вложенному полю" $
-      myView (sndL . fstL) (1 :: Int, ("hello", True))
-        `shouldBe` "hello"
+    it "нормализует medium → medium" $
+      validatePriority "medium" `shouldBe` Right "medium"
 
-    it "mySet на вложенном поле" $
-      mySet (sndL . fstL) "world" (1 :: Int, ("hello", True))
-        `shouldBe` (1, ("world", True))
+    it "нормализует MeDiUm → medium" $
+      validatePriority "MeDiUm" `shouldBe` Right "medium"
+
+    it "отклоняет неизвестный приоритет" $
+      validatePriority "urgent" `shouldBe` Left "Неизвестный приоритет: urgent"
+
+    it "отклоняет пустую строку" $
+      validatePriority "" `shouldBe` Left "Неизвестный приоритет: "
+
+  describe "Упражнение 6: entityToResponse" $ do
+    it "конвертирует задачу в ответ" $ do
+      let resp = entityToResponse 1 todoTask
+      responseId resp `shouldBe` 1
+      responseTitle resp `shouldBe` "Купить молоко"
+      responsePriority resp `shouldBe` "low"
+      responseStatus resp `shouldBe` "todo"
+
+    it "конвертирует задачу InProgress" $ do
+      let resp = entityToResponse 42 inProgTask
+      responseId resp `shouldBe` 42
+      responsePriority resp `shouldBe` "high"
+      responseStatus resp `shouldBe` "in_progress"
+
+    it "конвертирует задачу Done" $ do
+      let resp = entityToResponse 7 doneTask
+      responsePriority resp `shouldBe` "medium"
+      responseStatus resp `shouldBe` "done"
+
+  describe "Упражнение 7: priorityToText / textToPriority" $ do
+    it "priorityToText Low" $
+      priorityToText Low `shouldBe` "low"
+
+    it "priorityToText Medium" $
+      priorityToText Medium `shouldBe` "medium"
+
+    it "priorityToText High" $
+      priorityToText High `shouldBe` "high"
+
+    it "textToPriority \"low\"" $
+      textToPriority "low" `shouldBe` Right Low
+
+    it "textToPriority \"HIGH\" (регистронезависимый)" $
+      textToPriority "HIGH" `shouldBe` Right High
+
+    it "textToPriority неизвестное значение" $
+      textToPriority "critical" `shouldBe` Left "Неизвестный приоритет: critical"
+
+    it "round-trip: textToPriority . priorityToText" $ do
+      textToPriority (priorityToText Low) `shouldBe` Right Low
+      textToPriority (priorityToText Medium) `shouldBe` Right Medium
+      textToPriority (priorityToText High) `shouldBe` Right High
+
+  describe "Упражнение 8: statusToText / textToStatus" $ do
+    it "statusToText Todo" $
+      statusToText Todo `shouldBe` "todo"
+
+    it "statusToText InProgress" $
+      statusToText InProgress `shouldBe` "in_progress"
+
+    it "statusToText Done" $
+      statusToText Done `shouldBe` "done"
+
+    it "textToStatus \"todo\"" $
+      textToStatus "todo" `shouldBe` Right Todo
+
+    it "textToStatus \"IN_PROGRESS\" (регистронезависимый)" $
+      textToStatus "IN_PROGRESS" `shouldBe` Right InProgress
+
+    it "textToStatus \"Done\" (регистронезависимый)" $
+      textToStatus "Done" `shouldBe` Right Done
+
+    it "textToStatus неизвестное значение" $
+      textToStatus "pending" `shouldBe` Left "Неизвестный статус: pending"
+
+    it "round-trip: textToStatus . statusToText" $ do
+      textToStatus (statusToText Todo) `shouldBe` Right Todo
+      textToStatus (statusToText InProgress) `shouldBe` Right InProgress
+      textToStatus (statusToText Done) `shouldBe` Right Done

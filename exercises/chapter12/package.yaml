@@ -1,6 +1,6 @@
 name: chapter12
 version: 0.1.0.0
-synopsis: "Haskell by Example — Глава 12: Приключения с монадами"
+synopsis: "Haskell by Example — Глава 12: Монады"
 license: MIT
 
 default-extensions:
@@ -22,13 +22,11 @@ default-extensions:
 
 dependencies:
   - base >= 4.18 && < 5
-  - mtl
-  - containers
-  - aeson
-  - bytestring
 
 library:
   source-dirs: src
+  dependencies:
+    - containers
 
 tests:
   chapter12-tests:
@@ -37,4 +35,4 @@ tests:
     dependencies:
       - chapter12
       - hspec
-      - directory
+      - containers

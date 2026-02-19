@@ -1,336 +1,507 @@
-# Элементы теории категорий
+# GADTs и семейства типов
 
-## Цели главы
+В [предыдущей главе](chapter18.md) мы построили язык запросов для трекера — парсер превращает текст в AST, а исполнитель фильтрует задачи. Но наш AST допускает бессмысленные комбинации: ничто не мешает написать `NotFilter (NotFilter (NotFilter ...))` или передать `ListValue` туда, где ожидается одно значение. Типы не защищают нас от семантических ошибок.
 
-В этой главе мы соберём разрозненные абстракции из предыдущих глав в единую картину. Вы уже знаете `Functor` (глава 6), `Applicative` (глава 7), `Monad` (глава 8), `Lens` и `Prism` (глава 17). Здесь мы добавим недостающие кусочки: `Contravariant`, `Profunctor`, `Endo` и `Iso` — и покажем, как они связаны через теорию категорий.
+В этой главе мы выйдем за пределы обычных ADT и изучим инструменты для выражения более точных инвариантов на уровне типов. Мы увидим ограничения обычных ADT, познакомимся с **фантомными типами**, изучим **GADTs** (обобщённые алгебраические типы с индивидуальными сигнатурами конструкторов), разберём **DataKinds** (продвижение типов на уровень родов) и **семейства типов** (функции на уровне типов). Всё это применим в проекте — типобезопасном конструкторе запросов для трекера, где невалидные состояния отклоняются компилятором.
 
-Это не курс формальной математики. Цель — дать *словарь для паттернов*, которые вы уже используете.
+## Подготовка проекта
 
-## Иерархия абстракций
-
-```text
-             Functor (fmap: ковариантный)
-            /        \
-    Applicative    Traversable
-        |
-      Monad
-
-    Contravariant (contramap: контравариантный)
-      |
-    Divisible → Decidable
-
-    Bifunctor (bimap)
-      |
-    Profunctor (dimap: contra по 1-му, co по 2-му)
-     /      \
-  Strong    Choice
-     \      /
-    Оптики: Lens, Prism, Iso, Traversal
-
-  Semigroup → Monoid
-                 |
-               Endo a
-```
-
-```admonish info title="Знакомая территория"
-Вы уже знаете `Functor` (глава 6), `Applicative` (глава 7), `Monad` (глава 8),
-`Semigroup`/`Monoid` (глава 7), `Lens`/`Prism` (глава 17).
-Эта глава добавляет недостающие кусочки пазла.
-```
-
-## Contravariant
-
-### Мотивация
-
-`Functor` работает для типов-«производителей»: `Maybe a` *содержит* `a`, `[a]` *содержит* `a`. Операция `fmap` трансформирует содержимое:
-
-```haskell
-fmap :: Functor f => (a -> b) -> f a -> f b
-```
-
-А что если тип *потребляет* `a`? Предикат `a -> Bool` не содержит `a` — он его *принимает*:
-
-```haskell
-newtype Predicate a = Predicate { getPredicate :: a -> Bool }
-```
-
-Попробуем определить `fmap` для `Predicate`:
-
-```haskell
--- fmap :: (a -> b) -> Predicate a -> Predicate b
--- fmap f (Predicate p) = Predicate (\b -> p (??? b))
--- Нужно: b -> a, но у нас a -> b. Направление не то!
-```
-
-### Определение
-
-`Contravariant` — «зеркальный» `Functor`. Стрелка в `contramap` идёт *в обратную сторону*:
-
-```haskell
-class Contravariant f where
-  contramap :: (b -> a) -> f a -> f b
-  --           ^^^^^
-  --           b -> a, не a -> b!
-```
-
-Для `Predicate`:
-
-```haskell
-instance Contravariant Predicate where
-  contramap f (Predicate p) = Predicate (p . f)
-  -- сначала f :: b -> a, потом p :: a -> Bool
-```
-
-### Примеры
-
-```haskell
-import Data.Functor.Contravariant
-
-isEven :: Predicate Int
-isEven = Predicate even
-
--- Адаптируем для строк: «строка чётной длины»
-hasEvenLength :: Predicate String
-hasEvenLength = contramap length isEven
--- contramap length: String -> Int, затем isEven: Int -> Bool
-```
+Код этой главы находится в `exercises/chapter19`. Соберите проект:
 
 ```text
-> getPredicate hasEvenLength "hi"
-True
-
-> getPredicate hasEvenLength "hey"
-False
+$ cd exercises/chapter19
+$ stack build
 ```
 
-Другие контравариантные типы:
+Расширения языка, используемые в этой главе:
 
 ```haskell
--- Сравнение
-newtype Comparison a = Comparison { getComparison :: a -> a -> Ordering }
-
--- Эквивалентность
-newtype Equivalence a = Equivalence { getEquivalence :: a -> a -> Bool }
-
--- Обе контравариантны: адаптируем вход, не выход
-byAge :: Comparison Person
-byAge = contramap personAge defaultComparison
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE StandaloneDeriving #-}
 ```
 
-```admonish info title="Знакомый аналог"
-**TypeScript:** `(input: A) => boolean` — это `Predicate A`. Если нужно адаптировать
-для типа `B`, пишем `(b: B) => predicate(toA(b))`. Это и есть `contramap toA predicate`.
+## Ограничения обычных ADT
 
-**Python:** `key=lambda x: x.age` в `sorted()` — это contramap!
-`sorted(people, key=lambda p: p.age)` ≈ `getComparison (contramap age defaultComparison)`.
-```
+### Проблема: конструктор не может ограничить тип результата
 
-```admonish warning title="Направление стрелки"
-`contramap` идёт «в обратную сторону» относительно `fmap`. Если интуиция подсказывает,
-что типы не сходятся — попробуйте перевернуть стрелку. Правило: `fmap` — для выходов
-(ковариантная позиция), `contramap` — для входов (контравариантная позиция).
-```
-
-### Ковариантность vs контравариантность
-
-| | Ковариантный (`Functor`) | Контравариантный (`Contravariant`) |
-|---|---|---|
-| Метод | `fmap :: (a -> b) -> f a -> f b` | `contramap :: (b -> a) -> f a -> f b` |
-| Направление | По стрелке | Против стрелки |
-| Тип «содержит» a | Да (`Maybe a`, `[a]`) | Нет — «потребляет» a |
-| Примеры | `Maybe`, `[]`, `IO`, `Either e` | `Predicate`, `Comparison`, `Op` |
-
-## Profunctor
-
-### Мотивация
-
-Функция `a -> b` одновременно *потребляет* `a` (контравариантная позиция) и *производит* `b` (ковариантная позиция). Тип, который контравариантен по первому аргументу и ковариантен по второму, называется **профунктором**:
+Вспомним тип выражения из [главы 3](chapter03.md):
 
 ```haskell
-class Profunctor p where
-  dimap :: (c -> a) -> (b -> d) -> p a b -> p c d
-  --       ^^^^^^^     ^^^^^^^
-  --       contra      co
+data Expr
+  = LitInt Int
+  | LitBool Bool
+  | Add Expr Expr
+  | If Expr Expr Expr
+  deriving (Show)
 ```
 
-`dimap` — «обернуть» вход и выход одновременно: преобразовать входные данные *перед* обработкой и результат *после*.
-
-### Канонический пример: `(->)`
+Этот тип допускает бессмысленные выражения:
 
 ```haskell
-instance Profunctor (->) where
-  dimap pre post f = post . f . pre
-  -- pre :: c -> a    (преобразовать вход)
-  -- f   :: a -> b    (обработать)
-  -- post :: b -> d   (преобразовать выход)
+-- Складываем булево значение с числом — типы не помешают!
+badExpr :: Expr
+badExpr = Add (LitBool True) (LitInt 42)
+
+-- If с числом в условии
+badIf :: Expr
+badIf = If (LitInt 0) (LitBool True) (LitBool False)
 ```
 
+Компилятор не жалуется — `Expr` одинаково представляет и числа, и булевы значения. Ошибка обнаружится только в рантайме при интерпретации.
+
 ```haskell
--- Капитализация фраз:
--- 1. Разбить строку на слова (pre)
--- 2. Капитализировать каждое (f)
--- 3. Склеить обратно (post)
-capitalizePhrase :: String -> String
-capitalizePhrase = dimap words unwords (map capitalize)
-  where capitalize []     = []
-        capitalize (c:cs) = toUpper c : cs
+eval :: Expr -> Either String Int
+eval (LitInt n)    = Right n
+eval (LitBool _)   = Left "ожидалось число, получен Bool"  -- рантайм ошибка!
+eval (Add e1 e2)   = (+) <$> eval e1 <*> eval e2
+eval (If cond t f) = Left "нужна отдельная функция для Bool"
 ```
+
+Мы хотели бы сказать компилятору: «`Add` принимает только выражения, возвращающие числа, а `If` — выражение с булевым условием». Обычные ADT этого не позволяют.
+
+```admonish tip title="Знакомый аналог"
+**TypeScript:** `type Expr = { kind: 'int', value: number } | { kind: 'bool', value: boolean } | { kind: 'add', left: Expr, right: Expr }` — та же проблема. TypeScript не может выразить «`add` принимает только `int`-выражения» без conditional types.
+**Rust:** обычные enum имеют ту же проблему. Для типобезопасных выражений нужны generics с PhantomData.
+```
+
+## Фантомные типы
+
+### Идея: добавить параметр типа, не используемый в данных
+
+**Фантомный тип** — параметр типа, который не появляется ни в одном конструкторе, но используется для ограничений на уровне типов:
+
+```haskell
+-- 'a' — фантомный параметр: не используется в данных
+data Expr a
+  = LitInt Int
+  | LitBool Bool
+  | Add (Expr a) (Expr a)
+  | If (Expr a) (Expr a) (Expr a)
+```
+
+Теперь `Expr Int` и `Expr Bool` — разные типы. Но проблема осталась: ничто не мешает пользователю написать `LitBool True :: Expr Int`. Фантомный тип — просто метка, компилятор не проверяет соответствие.
+
+### Умные конструкторы
+
+Можно *спрятать* настоящие конструкторы и экспортировать только «умные» функции:
+
+```haskell
+module Expr (Expr, litInt, litBool, add, ifThenElse) where
+
+litInt :: Int -> Expr Int
+litInt = LitInt
+
+litBool :: Bool -> Expr Bool
+litBool = LitBool
+
+add :: Expr Int -> Expr Int -> Expr Int
+add = Add
+
+ifThenElse :: Expr Bool -> Expr a -> Expr a -> Expr a
+ifThenElse = If
+```
+
+Теперь `add (litBool True) (litInt 42)` не скомпилируется — типы не совпадают! Но это хрупкое решение: внутри модуля по-прежнему можно нарушить инварианты. И `eval` не может использовать паттерн-матчинг по типу `a`.
+
+## GADTs: обобщённые алгебраические типы данных
+
+### Синтаксис
+
+**GADTs** решают эту проблему, позволяя каждому конструктору явно указать тип результата:
+
+```haskell
+{-# LANGUAGE GADTs #-}
+
+data Expr a where
+  LitInt  :: Int -> Expr Int
+  LitBool :: Bool -> Expr Bool
+  Add     :: Expr Int -> Expr Int -> Expr Int
+  If      :: Expr Bool -> Expr a -> Expr a -> Expr a
+```
+
+Ключевое отличие от обычного ADT: каждый конструктор имеет *свою* сигнатуру с указанием конкретного возвращаемого типа:
+
+- `LitInt` возвращает `Expr Int` (не `Expr a`).
+- `LitBool` возвращает `Expr Bool`.
+- `Add` принимает *только* `Expr Int` и возвращает `Expr Int`.
+- `If` принимает `Expr Bool` как условие.
+
+### Типобезопасность на этапе компиляции
+
+Теперь бессмысленные выражения просто *не компилируются*:
+
+```haskell
+-- Ошибка компиляции!
+-- badExpr = Add (LitBool True) (LitInt 42)
+--   • Couldn't match type 'Bool' with 'Int'
+--     Expected: Expr Int
+--       Actual: Expr Bool
+
+-- OK:
+goodExpr :: Expr Int
+goodExpr = Add (LitInt 1) (LitInt 2)
+
+-- OK: If с правильными типами
+goodIf :: Expr Int
+goodIf = If (LitBool True) (LitInt 1) (LitInt 2)
+```
+
+### Типобезопасный eval
+
+С GADTs `eval` становится тотальной функцией — без `Either` и без рантайм-ошибок:
+
+```haskell
+eval :: Expr a -> a
+eval (LitInt n)     = n           -- GHC знает: a ~ Int
+eval (LitBool b)    = b           -- GHC знает: a ~ Bool
+eval (Add e1 e2)    = eval e1 + eval e2  -- оба Int
+eval (If cond t f)  = if eval cond then eval t else eval f
+```
+
+Это работает благодаря **уточнению типов** (type refinement): при паттерн-матчинге по `LitInt n` компилятор знает, что `a ~ Int`, и позволяет вернуть `n :: Int` как `a`.
 
 ```text
-> capitalizePhrase "hello beautiful world"
-"Hello Beautiful World"
+> eval (Add (LitInt 1) (LitInt 2))
+3
+
+> eval (If (LitBool True) (LitInt 10) (LitInt 20))
+10
 ```
 
-```admonish example title="Пример: dimap как обёртка"
-`dimap words unwords :: (String -> String) -> ([String] -> [String])`
-
-Это «оборачивает» функцию: сначала разбивает строку на слова, обрабатывает список слов,
-затем склеивает обратно. Вход и выход функции трансформируются независимо.
+```admonish note title="Ключевое свойство GADTs"
+При паттерн-матчинге по конструктору GADT компилятор *уточняет* переменные типа. Это позволяет писать функции, которые возвращают разные типы в зависимости от конструктора — без приведения типов и без рантайм-проверок.
 ```
 
-### Связь с оптиками
+### Deriving для GADTs
 
-В главе 17 мы видели profunctor encoding линз:
+Обычный `deriving` не работает с GADTs. Нужен `StandaloneDeriving`:
 
 ```haskell
-type Lens  s t a b = forall p. Strong p     => p a b -> p s t
-type Prism s t a b = forall p. Choice p     => p a b -> p s t
-type Iso   s t a b = forall p. Profunctor p => p a b -> p s t
+{-# LANGUAGE StandaloneDeriving #-}
+
+deriving instance Show a => Show (Expr a)
+deriving instance Eq a => Eq (Expr a)
 ```
 
-`Iso` требует только `Profunctor` — это самая слабая (и потому самая общая) оптика. `Lens` добавляет `Strong`, `Prism` — `Choice`. Иерархия оптик — это иерархия ограничений на профунктор.
+При паттерн-матчинге по конструктору GADT компилятор уточняет переменную типа `a`, поэтому обычный `deriving` не работает — он не знает, как уточнение влияет на `a`. `StandaloneDeriving` позволяет написать ограничение явно: «выводи `Show (Expr a)`, если `Show a`».
 
-## Endomorphism (Endo)
+## DataKinds: продвижение типов
 
-### Мотивация
+### Проблема: фантомные типы слишком свободны
 
-Функция `a -> a` — **эндоморфизм**: она не меняет тип. Под композицией с `id` такие функции образуют моноид:
+С GADTs мы ограничили `Expr a`, но `a` может быть *любым* типом: `Expr String`, `Expr [Maybe (IO ())]` — компилятор не жалуется, хотя такие типы бессмысленны. Мы хотим сказать: «`a` может быть только `Int` или `Bool`».
+
+### DataKinds: типы становятся родами
+
+Расширение `DataKinds` **продвигает** (promotes) типы данных на уровень родов (kinds):
 
 ```haskell
-newtype Endo a = Endo { appEndo :: a -> a }
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE KindSignatures #-}
 
-instance Semigroup (Endo a) where
-  Endo f <> Endo g = Endo (f . g)
+-- Обычный тип данных
+data ExprType = IntType | BoolType
 
-instance Monoid (Endo a) where
-  mempty = Endo id
+-- С DataKinds 'IntType и 'BoolType становятся типами рода ExprType
+-- (апостроф ' означает продвинутый конструктор)
+
+data Expr (t :: ExprType) where
+  LitInt  :: Int -> Expr 'IntType
+  LitBool :: Bool -> Expr 'BoolType
+  Add     :: Expr 'IntType -> Expr 'IntType -> Expr 'IntType
+  If      :: Expr 'BoolType -> Expr t -> Expr t -> Expr t
 ```
 
-Мы уже познакомились с `Endo` в главе 7. Здесь рассмотрим его практическое применение.
-
-### Config Builder
-
-Паттерн «список модификаторов, применяемых последовательно»:
-
-```haskell
-data Config = Config
-  { configPort    :: Int
-  , configHost    :: String
-  , configVerbose :: Bool
-  } deriving Show
-
-defaultConfig :: Config
-defaultConfig = Config 8080 "localhost" False
-
-setPort :: Int -> Endo Config
-setPort p = Endo $ \c -> c { configPort = p }
-
-setHost :: String -> Endo Config
-setHost h = Endo $ \c -> c { configHost = h }
-
-setVerbose :: Endo Config
-setVerbose = Endo $ \c -> c { configVerbose = True }
-
--- Композиция через mconcat:
-productionConfig :: Config
-productionConfig = appEndo
-  (mconcat [setPort 443, setHost "example.com", setVerbose])
-  defaultConfig
--- Config { configPort = 443, configHost = "example.com", configVerbose = True }
-```
-
-### Middleware
-
-Тот же паттерн — в middleware-цепочках:
-
-```haskell
-type Middleware = Endo Application
--- Application ~ Request -> IO Response
-
-logging :: Middleware
-logging = Endo $ \app req -> do
-  putStrLn $ "Request: " <> show req
-  app req
-
-auth :: Middleware
-auth = Endo $ \app req -> do
-  if authorized req then app req
-  else pure forbidden
-
--- Композиция: logging *после* auth
-stack :: Middleware
-stack = logging <> auth  -- = Endo (logging . auth)
-```
-
-```admonish info title="Знакомый аналог"
-**TypeScript:** Express middleware `(req, res, next) => { ... next() }` — эндоморфизм
-на handler pipeline. `app.use(a).use(b).use(c)` ≈ `appEndo (mconcat [a, b, c])`.
-
-**Python:** Django middleware, Flask `@app.before_request` — аналогичная композиция.
-```
-
-## Isomorphism (Iso)
-
-### Мотивация
-
-Два типа **изоморфны**, если между ними есть биекция — пара функций `to` и `from`, таких что `to . from == id` и `from . to == id`. Информация не теряется ни в одном направлении.
-
-### Стандартные изоморфизмы
+Теперь `Expr 'IntType` и `Expr 'BoolType` — единственные допустимые типы. `Expr String` просто не скомпилируется:
 
 ```text
-(a, b)        ≅  (b, a)           -- swap
-(a, (b, c))   ≅  ((a, b), c)     -- assoc
-Either () a   ≅  Maybe a          -- вложение «пустоты»
-(a -> b -> c) ≅  ((a, b) -> c)   -- curry / uncurry
+• Expected kind 'ExprType', but 'String' has kind '*'
 ```
 
-В Haskell каждый `newtype` — это изоморфизм:
+```admonish note title="Уровни в Haskell"
+Без DataKinds в Haskell три уровня:
+- **Значения**: `42`, `True`, `Just "hello"` — живут в рантайме.
+- **Типы**: `Int`, `Bool`, `Maybe String` — род (kind) `*` (или `Type`).
+- **Роды**: `*`, `* -> *` — классифицируют типы.
+
+DataKinds добавляет четвёртый уровень: обычные типы данных *продвигаются* на уровень родов, а их конструкторы становятся типами.
+```
+
+### Пример: безопасные состояния
+
+DataKinds часто используются для кодирования состояний на уровне типов:
 
 ```haskell
-newtype Age = Age { unAge :: Int }
--- Age :: Int -> Age     (to)
--- unAge :: Age -> Int   (from)
--- unAge . Age == id, Age . unAge == id
+data TaskState = Draft | Active | Completed
+
+data Task (s :: TaskState) where
+  MkDraft    :: Text -> Task 'Draft
+  MkActive   :: Text -> Task 'Active
+  MkComplete :: Text -> Task 'Completed
+
+-- Можно завершить только активную задачу:
+completeTask :: Task 'Active -> Task 'Completed
+completeTask (MkActive title) = MkComplete title
+
+-- Ошибка компиляции: нельзя завершить черновик!
+-- bad = completeTask (MkDraft "test")
+--   Couldn't match type ''Draft' with ''Active'
 ```
 
-### Iso в lens
+```admonish tip title="Знакомый аналог"
+**TypeScript:** branded types с условными типами:
+```typescript
+type Draft = { __state: 'draft'; title: string }
+type Active = { __state: 'active'; title: string }
+function complete(task: Active): Completed { ... }
+```
 
-В главе 17 мы определили:
+В Haskell с DataKinds это встроено в систему типов — без хаков и «брендирования».
+
+## Семейства типов (Type Families)
+
+### Функции на уровне типов
+
+**Семейства типов** — функции, которые работают на уровне типов. Так же, как обычная функция превращает одно значение в другое, семейство типов превращает один тип в другой.
 
 ```haskell
-celsiusFahrenheit :: Iso' Double Double
-celsiusFahrenheit = iso (\c -> c * 9/5 + 32) (\f -> (f - 32) * 5/9)
+{-# LANGUAGE TypeFamilies #-}
+
+-- Закрытое семейство типов (closed type family)
+type family HaskellType (t :: ExprType) where
+  HaskellType 'IntType  = Int
+  HaskellType 'BoolType = Bool
 ```
 
-`Iso` — оптика, которая «видит» весь тип. В отличие от `Lens` (видит часть) или `Prism` (видит один конструктор), `Iso` — полная биекция.
+`HaskellType` — функция на уровне типов: `HaskellType 'IntType` *вычисляется* в `Int`, `HaskellType 'BoolType` — в `Bool`.
 
-```admonish info title="Знакомый аналог"
-**TypeScript:** `JSON.stringify` / `JSON.parse` — *почти* изоморфизм, но теряет
-`undefined`, функции, `Date`. В Haskell `aeson` + deriving — настоящий изоморфизм
-для ваших типов (если тип полностью представим в JSON).
+Теперь `eval` можно написать так:
+
+```haskell
+eval :: Expr t -> HaskellType t
+eval (LitInt n)     = n      -- HaskellType 'IntType ~ Int
+eval (LitBool b)    = b      -- HaskellType 'BoolType ~ Bool
+eval (Add e1 e2)    = eval e1 + eval e2
+eval (If cond t f)  = if eval cond then eval t else eval f
 ```
 
-## Шпаргалка
+### Открытые семейства типов
 
-| Абстракция | Класс | Ключевой метод | Интуиция |
-|------------|-------|----------------|----------|
-| Contravariant | `Contravariant` | `contramap :: (b -> a) -> f a -> f b` | Адаптировать потребителя |
-| Profunctor | `Profunctor` | `dimap :: (c -> a) -> (b -> d) -> p a b -> p c d` | Обернуть вход и выход |
-| Endo | `Monoid (Endo a)` | `appEndo :: Endo a -> a -> a` | Цепочка трансформаций |
-| Iso | `Iso' s a` | `iso :: (s -> a) -> (a -> s) -> Iso' s a` | Два типа = одна форма |
+Закрытые семейства (с `where`) определяют все случаи в одном месте — как `case` в обычном коде. Открытые семейства позволяют добавлять случаи в разных модулях:
 
-## Дальнейшее чтение
+```haskell
+-- Открытое семейство: случаи добавляются инстансами
+type family Pretty a :: Symbol  -- Symbol — тип-уровневая строка
 
-- [Typeclassopedia (HaskellWiki)](https://wiki.haskell.org/Typeclassopedia) — полная карта иерархии type classes.
-- Bartosz Milewski, *Category Theory for Programmers* — доступное введение в теорию категорий для программистов.
-- [Don't Fear the Profunctor Optics](https://github.com/hablapps/DontFearTheProfunctorOptics) — связь профункторов и оптик.
+type instance Pretty Int  = "целое число"
+type instance Pretty Bool = "логическое значение"
+```
+
+```admonish warning title="Когда использовать какое семейство"
+- **Закрытые** семейства типов — когда все случаи известны заранее. Аналог: `case` или закрытый `data`. Используйте по умолчанию.
+- **Открытые** семейства типов — когда пользователи вашей библиотеки должны добавлять случаи. Аналог: класс типов. Используйте осторожно — возможны конфликты при импорте.
+```
+
+### Ассоциированные семейства типов
+
+Семейства типов часто связаны с классами типов:
+
+```haskell
+class Container f where
+  type Elem f           -- ассоциированный тип
+  empty  :: f
+  insert :: Elem f -> f -> f
+  toList :: f -> [Elem f]
+
+instance Container [a] where
+  type Elem [a] = a
+  empty  = []
+  insert = (:)
+  toList = id
+
+instance Container (Set a) where
+  type Elem (Set a) = a
+  empty  = Set.empty
+  insert = Set.insert
+  toList = Set.toList
+```
+
+`Elem` — **ассоциированное семейство типов** (associated type family). Каждый инстанс `Container` определяет, какой тип элементов он содержит.
+
+```admonish tip title="Знакомый аналог"
+**TypeScript:** `interface Container<T> { elem: T; ... }` — generic параметр.
+**Rust:** `trait Container { type Elem; ... }` — ассоциированный тип, *точная* аналогия.
+Семейства типов в Haskell более мощные: они могут вычислять типы через паттерн-матчинг, чего нет в Rust (пока) и TypeScript.
+```
+
+## Проект: типобезопасный конструктор запросов
+
+Вернёмся к нашему трекеру. В [главе 18](chapter18.md) мы строили запросы из текста. Теперь создадим **типобезопасный конструктор запросов** — EDSL, который не позволяет составить невалидный запрос.
+
+### Состояния запроса
+
+Определим состояния конструктора запросов:
+
+```haskell
+data QueryState = Building | Ready
+
+data QueryBuilder (s :: QueryState) where
+  EmptyQuery  :: QueryBuilder 'Building
+  AddFilter   :: FilterExpr -> QueryBuilder 'Building -> QueryBuilder 'Building
+  AddSort     :: SortField -> QueryBuilder 'Building -> QueryBuilder 'Building
+  FinalQuery  :: QueryBuilder 'Building -> QueryBuilder 'Ready
+```
+
+### Конструктор с гарантиями
+
+```haskell
+-- Начать построение запроса
+newQuery :: QueryBuilder 'Building
+newQuery = EmptyQuery
+
+-- Добавить фильтр (только к строящемуся запросу)
+whereStatus :: Status -> QueryBuilder 'Building -> QueryBuilder 'Building
+whereStatus s = AddFilter (StatusFilter (TextValue (T.pack (show s))))
+
+wherePriority :: Priority -> QueryBuilder 'Building -> QueryBuilder 'Building
+wherePriority p = AddFilter (PriorityFilter (TextValue (T.pack (show p))))
+
+whereTag :: Text -> QueryBuilder 'Building -> QueryBuilder 'Building
+whereTag t = AddFilter (TagFilter (TextValue t))
+
+-- Завершить построение (только строящийся → готовый)
+build :: QueryBuilder 'Building -> QueryBuilder 'Ready
+build = FinalQuery
+
+-- Выполнить (только готовый запрос!)
+execute :: QueryBuilder 'Ready -> [Task] -> [Task]
+execute (FinalQuery qb) tasks = applyFilters (collectFilters qb) tasks
+```
+
+### Использование
+
+```haskell
+-- OK: правильная последовательность
+result :: [Task] -> [Task]
+result = execute query
+  where
+    query = build
+          . whereStatus Done
+          . wherePriority High
+          $ newQuery
+
+-- Ошибка компиляции: нельзя выполнить незавершённый запрос!
+-- bad = execute (whereStatus Done newQuery)
+--   Couldn't match type ''Building' with ''Ready'
+
+-- Ошибка компиляции: нельзя добавить фильтр к завершённому запросу!
+-- bad = whereStatus Todo (build newQuery)
+--   Couldn't match type ''Ready' with ''Building'
+```
+
+### Извлечение фильтров
+
+```haskell
+collectFilters :: QueryBuilder 'Building -> [FilterExpr]
+collectFilters EmptyQuery         = []
+collectFilters (AddFilter f rest) = f : collectFilters rest
+collectFilters (AddSort _ rest)   = collectFilters rest
+
+applyFilters :: [FilterExpr] -> [Task] -> [Task]
+applyFilters filters tasks = foldl' (\ts f -> filter (matchFilter f) ts) tasks filters
+```
+
+```admonish note title="Протокол на уровне типов"
+Мы закодировали *протокол* использования API в типах. Пользователь *физически не может* вызвать `execute` до `build`, а `build` — дважды. Это не рантайм-проверки и не документация — это *гарантия компилятора*.
+```
+
+### Типобезопасная валидация
+
+Добавим семейство типов для валидации полей:
+
+```haskell
+type family ValidField (field :: Symbol) :: Bool where
+  ValidField "status"   = 'True
+  ValidField "priority" = 'True
+  ValidField "tag"      = 'True
+  ValidField "title"    = 'True
+  ValidField _          = 'False
+```
+
+Это семейство вычисляет на уровне типов, допустимо ли имя поля. С помощью дополнительных расширений (`TypeOperators`, `ConstraintKinds`) можно сделать так, чтобы невалидные поля не компилировались.
+
+## Упражнения
+
+Решения пишите в `test/MySolutions.hs`. Проверяйте: `stack test`.
+
+### Проект
+
+1. Определите GADT `Expr a` с конструкторами `LitInt`, `LitBool`, `Add` и `If`. Реализуйте тотальную функцию `eval`:
+
+    ```haskell
+    data Expr a where
+      LitInt  :: Int -> Expr Int
+      LitBool :: Bool -> Expr Bool
+      Add     :: Expr Int -> Expr Int -> Expr Int
+      If      :: Expr Bool -> Expr a -> Expr a -> Expr a
+
+    eval :: Expr a -> a
+    ```
+
+2. Добавьте конструкторы `Equal :: Expr Int -> Expr Int -> Expr Bool` и `Not :: Expr Bool -> Expr Bool` к `Expr`. Обновите `eval`.
+
+3. Реализуйте `QueryBuilder` с состояниями `Building` и `Ready` и функции `newQuery`, `whereStatus`, `build`, `execute`.
+
+### Практика
+
+4. Определите тип `SafeList` с помощью DataKinds, который различает пустые и непустые списки:
+
+    ```haskell
+    data Emptiness = Empty | NonEmpty
+
+    data SafeList (e :: Emptiness) a where
+      Nil  :: SafeList 'Empty a
+      Cons :: a -> SafeList e a -> SafeList 'NonEmpty a
+
+    safeHead :: SafeList 'NonEmpty a -> a
+    ```
+
+    `safeHead Nil` не должен компилироваться.
+
+5. Определите закрытое семейство типов `Add` для сложения натуральных чисел на уровне типов:
+
+    ```haskell
+    data Nat = Z | S Nat
+
+    type family Add (n :: Nat) (m :: Nat) :: Nat where
+      Add 'Z m     = m
+      Add ('S n) m = 'S (Add n m)
+    ```
+
+    Проверьте: `Proxy :: Proxy (Add ('S 'Z) ('S ('S 'Z)))` должен иметь тип `Proxy ('S ('S ('S 'Z)))`.
+
+6. Определите ассоциированное семейство типов `Key` для класса `HasKey`:
+
+    ```haskell
+    class HasKey a where
+      type Key a
+      getKey :: a -> Key a
+    ```
+
+    Напишите инстансы для `Task` (ключ `TaskId`) и для пар `(k, v)` (ключ `k`).
+
+## Заключение
+
+GADTs и семейства типов — это «программирование на уровне типов». Вместо проверки инвариантов в рантайме мы *доказываем* их на этапе компиляции. Цена — более сложные типы. Выгода — невозможность целых классов ошибок. В этой главе мы прошли от ограничений обычных ADT через фантомные типы к GADTs (конструкторы с индивидуальными сигнатурами и уточнение типов при паттерн-матчинге), DataKinds (ограничение фантомных параметров через продвижение типов) и семействам типов (закрытым, открытым и ассоциированным). На практике мы применили всё это в типобезопасном конструкторе запросов, где невалидные последовательности операций отклоняются компилятором.
+
+В [следующей главе](chapter20.md) мы перейдём к линзам и оптикам — элегантному решению проблемы вложенных обновлений записей.
+
+```admonish tip title="Для углубления"
+- **Thinking with Types** — Сэнди Магир (Sandy Maguire): лучшая книга о type-level программировании в Haskell. Главы о GADTs, DataKinds и Type Families — must read.
+- **Haskell Wiki** — [GADTs for dummies](https://wiki.haskell.org/GADTs_for_dummies): вводная статья с примерами.
+- **GHC User Guide** — разделы о [GADTs](https://ghc.gitlab.haskell.org/ghc/doc/users_guide/exts/gadt.html) и [Type Families](https://ghc.gitlab.haskell.org/ghc/doc/users_guide/exts/type_families.html).
+- **Richard Eisenberg** — доклады о зависимых типах в Haskell: куда движется система типов GHC.
+```

@@ -1,6 +1,6 @@
 name: chapter18
 version: 0.1.0.0
-synopsis: "Haskell by Example — Глава 18: Веб-приложение с базой данных"
+synopsis: "Haskell by Example — Глава 18: DSL и парсеры (megaparsec)"
 license: MIT
 
 default-extensions:
@@ -8,31 +8,27 @@ default-extensions:
   - DeriveGeneric
   - DerivingStrategies
   - GeneralizedNewtypeDeriving
+  - DeriveFunctor
+  - DeriveFoldable
+  - DeriveTraversable
+  - LambdaCase
   - ScopedTypeVariables
   - TypeApplications
+  - NamedFieldPuns
+  - RecordWildCards
+  - TupleSections
+  - NumericUnderscores
   - ImportQualifiedPost
-  - TemplateHaskell
-  - QuasiQuotes
-  - TypeFamilies
-  - StandaloneDeriving
-  - UndecidableInstances
-  - DataKinds
-  - FlexibleInstances
-  - MultiParamTypeClasses
-  - GADTs
-  - FlexibleContexts
-  - TypeOperators
 
 dependencies:
   - base >= 4.18 && < 5
-  - text
-  - persistent
-  - persistent-sqlite
 
 library:
   source-dirs: src
   dependencies:
-    - monad-logger
+    - text
+    - megaparsec
+    - containers
 
 tests:
   chapter18-tests:
@@ -41,4 +37,5 @@ tests:
     dependencies:
       - chapter18
       - hspec
-      - persistent
+      - text
+      - megaparsec

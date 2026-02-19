@@ -6,14 +6,14 @@ cabal-version: 1.12
 
 name:           chapter11
 version:        0.1.0.0
-synopsis:       Haskell by Example — Глава 11: Интерфейс внешних функций (FFI)
+synopsis:       Haskell by Example — Глава 11: Functor и Applicative
 license:        MIT
 build-type:     Simple
 
 library
   exposed-modules:
-      Contact
-      FFIExample
+      TaskTracker
+      Validation
   other-modules:
       Paths_chapter11
   hs-source-dirs:
@@ -35,9 +35,7 @@ library
       NumericUnderscores
       ImportQualifiedPost
   build-depends:
-      aeson
-    , base >=4.18 && <5
-    , bytestring
+      base >=4.18 && <5
     , text
   default-language: Haskell2010
 
@@ -66,11 +64,8 @@ test-suite chapter11-tests
       NumericUnderscores
       ImportQualifiedPost
   build-depends:
-      aeson
-    , base >=4.18 && <5
-    , bytestring
+      base >=4.18 && <5
     , chapter11
-    , directory
     , hspec
     , text
   default-language: Haskell2010

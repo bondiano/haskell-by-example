@@ -1,0 +1,28 @@
+# HLint configuration for Haskell by Example
+# https://github.com/ndmitchell/hlint
+
+# Student-friendly: warnings instead of errors for common patterns
+- warn: {name: "Use camelCase"}
+- warn: {name: "Redundant bracket"}
+- warn: {name: "Redundant $"}
+- warn: {name: "Redundant do"}
+- warn: {name: "Use newtype instead of data"}
+
+# Encourage idiomatic Haskell
+- warn: {name: "Use map"}
+- warn: {name: "Use foldr"}
+- warn: {name: "Use foldl'"}
+- warn: {name: "Use concatMap"}
+- warn: {name: "Use any"}
+- warn: {name: "Use all"}
+- warn: {name: "Use maybe"}
+- warn: {name: "Use fromMaybe"}
+- warn: {name: "Eta reduce"}
+
+# Ignore in student solution files (they may have intermediate style)
+- ignore: {name: "Eta reduce", within: [MySolutions]}
+- ignore: {name: "Use newtype instead of data", within: [MySolutions]}
+- ignore: {name: "Redundant bracket", within: [MySolutions]}
+
+# Ignore in Spec files
+- ignore: {name: "Redundant do", within: [Spec]}

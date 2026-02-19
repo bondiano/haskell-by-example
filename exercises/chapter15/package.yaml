@@ -1,6 +1,6 @@
 name: chapter15
 version: 0.1.0.0
-synopsis: "Haskell by Example — Глава 15: Предметно-ориентированные языки"
+synopsis: "Haskell by Example — Глава 15: Организация проекта"
 license: MIT
 
 default-extensions:
@@ -26,9 +26,8 @@ dependencies:
 library:
   source-dirs: src
   dependencies:
-    - megaparsec
-    - parser-combinators
     - containers
+    - text
 
 tests:
   chapter15-tests:
@@ -37,5 +36,5 @@ tests:
     dependencies:
       - chapter15
       - hspec
-      - megaparsec
       - containers
+      - text

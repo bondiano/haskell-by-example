@@ -1,87 +1,150 @@
-{-# OPTIONS_GHC -Wno-orphans #-}
-
 module MySolutions where
 
-import Data.List (foldl')
-import Data.Map.Strict qualified as Map
-import Data.Set qualified as Set
+import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async
+import Control.Concurrent.MVar
+import Control.Concurrent.STM
 
-import Data.Expr.Typed
-import Data.Vec
-import Data.Container
-
--- Упражнение 1: вычислитель выражений
+-- ============================================================
+-- Упражнение 1: Потокобезопасный счётчик на MVar
 --
--- Реализуйте eval :: Expr a -> a.
--- При матчинге на ILit компилятор знает, что a ~ Int.
--- При матчинге на BLit — a ~ Bool. И так далее.
--- Функция тотальна: все случаи покрыты, типы гарантированы.
+-- MVar — это мутабельная переменная для синхронизации потоков.
+-- Реализуйте счётчик с операциями создания, инкремента и чтения.
+-- ============================================================
 
-eval :: Expr a -> a
-eval = undefined
+type Counter = MVar Int
 
--- Упражнение 2: красивая печать выражений
+-- | Создать новый счётчик с начальным значением 0.
+newCounter :: IO Counter
+newCounter = undefined
+
+{- | Атомарно увеличить счётчик на 1.
+Подсказка: используйте modifyMVar_.
+-}
+increment :: Counter -> IO ()
+increment = undefined
+
+{- | Прочитать текущее значение счётчика.
+Подсказка: используйте readMVar.
+-}
+getCount :: Counter -> IO Int
+getCount = undefined
+
+-- ============================================================
+-- Упражнение 2: Таймаут для IO-действия
 --
--- Реализуйте prettyExpr :: Expr a -> String.
--- Формат:
---   ILit n   → show n
---   BLit b   → show b
---   Add x y  → "(x + y)"
---   Eql x y  → "(x == y)"
---   If c t e → "(if c then t else e)"
---   Not x    → "(not x)"
---   And x y  → "(x && y)"
---   Gt x y   → "(x > y)"
+-- Используйте race из Control.Concurrent.Async:
+-- запустите действие «параллельно» с threadDelay.
+-- Если threadDelay завершится первым — результат Nothing.
+-- ============================================================
 
-prettyExpr :: Expr a -> String
-prettyExpr = undefined
+{- | Выполнить действие с таймаутом (в микросекундах).
 
--- Упражнение 3: Container с ассоциированным семейством типов
+>>> withTimeout 1000000 (pure 42)
+Just 42
+
+>>> withTimeout 1000 (threadDelay 1000000 >> pure 42)
+Nothing
+-}
+withTimeout :: Int -> IO a -> IO (Maybe a)
+withTimeout = undefined
+
+-- ============================================================
+-- Упражнение 3: Параллельная сумма
 --
--- Напишите экземпляры Container для:
---   [a]       — Elem [a] = a
---   Set a     — Elem (Set a) = a
---   Map k v   — Elem (Map k v) = (k, v)
+-- Вычислите сумму списка, используя конкурентные вычисления.
+-- Подсказка: можно использовать mapConcurrently и затем sum,
+-- или просто sum <$> mapConcurrently pure.
+-- ============================================================
+
+-- | Параллельно вычислить сумму списка.
+parallelSum :: [Int] -> IO Int
+parallelSum = undefined
+
+-- ============================================================
+-- Упражнение 4: STM банковские переводы
 --
--- Затем реализуйте containerFromList через foldl', insert и empty.
+-- TVar — транзакционная переменная из STM.
+-- Реализуйте безопасные банковские операции.
+-- ============================================================
 
-instance Container [a] where
-  type Elem [a] = a
-  empty  = undefined
-  insert = undefined
-  toList = undefined
+type Account = TVar Int
 
-instance Ord a => Container (Set.Set a) where
-  type Elem (Set.Set a) = a
-  empty  = undefined
-  insert = undefined
-  toList = undefined
+-- | Создать счёт с начальным балансом.
+newAccount :: Int -> IO Account
+newAccount = undefined
 
-instance Ord k => Container (Map.Map k v) where
-  type Elem (Map.Map k v) = (k, v)
-  empty  = undefined
-  insert = undefined
-  toList = undefined
+-- | Зачислить средства на счёт (STM-транзакция).
+deposit :: Account -> Int -> STM ()
+deposit = undefined
 
-containerFromList :: Container c => [Elem c] -> c
-containerFromList = undefined
+-- | Списать средства со счёта (STM-транзакция).
+withdraw :: Account -> Int -> STM ()
+withdraw = undefined
 
--- Упражнение 4: вектор с длиной в типе
+{- | Перевести средства с одного счёта на другой (STM-транзакция).
+Подсказка: используйте withdraw и deposit.
+-}
+transfer :: Account -> Account -> Int -> STM ()
+transfer = undefined
+
+-- ============================================================
+-- Упражнение 5: parallelMap
 --
--- Реализуйте операции на Vec n a:
---   vhead   — голова непустого вектора (тотальная!)
---   vtail   — хвост непустого вектора
---   vzip    — поэлементное объединение (длины совпадают по типу)
---   vappend — конкатенация (длина результата = Add n m)
+-- Применить IO-функцию к каждому элементу списка параллельно.
+-- Подсказка: используйте mapConcurrently.
+-- ============================================================
 
-vhead :: Vec ('Succ n) a -> a
-vhead = undefined
+{- | Параллельное применение функции к списку.
 
-vtail :: Vec ('Succ n) a -> Vec n a
-vtail = undefined
+>>> parallelMap (pure . (+1)) [1,2,3]
+[2,3,4]
+-}
+parallelMap :: (a -> IO b) -> [a] -> IO [b]
+parallelMap = undefined
 
-vzip :: Vec n a -> Vec n b -> Vec n (a, b)
-vzip = undefined
+-- ============================================================
+-- Упражнение 6: Логгер на TChan
+--
+-- TChan — транзакционный канал из STM.
+-- Реализуйте логгер, который накапливает сообщения.
+-- ============================================================
 
-vappend :: Vec n a -> Vec m a -> Vec (Add n m) a
-vappend = undefined
+type Logger = TChan String
+
+-- | Создать новый логгер.
+newLogger :: IO Logger
+newLogger = undefined
+
+-- | Записать сообщение в лог.
+logMessage :: Logger -> String -> IO ()
+logMessage = undefined
+
+{- | Прочитать все накопленные сообщения и очистить лог.
+Подсказка: используйте tryReadTChan в цикле.
+-}
+flushLog :: Logger -> IO [String]
+flushLog = undefined
+
+-- ============================================================
+-- Упражнение 7: Гонка нескольких действий
+--
+-- Запустите все IO-действия параллельно, верните результат
+-- первого завершившегося.
+-- Подсказка: используйте mapConcurrently/async + waitAny,
+-- или foldr с race.
+-- ============================================================
+
+-- | Запустить все действия и вернуть результат первого завершившегося.
+raceAll :: [IO a] -> IO a
+raceAll = undefined
+
+-- ============================================================
+-- Упражнение 8: Пул воркеров (не тестируется)
+--
+-- workerPool :: Int -> TChan (IO ()) -> IO ()
+-- workerPool = undefined
+--
+-- Запустите n воркеров, каждый из которых берёт задачу из канала
+-- и выполняет её. Воркеры работают бесконечно.
+-- ============================================================

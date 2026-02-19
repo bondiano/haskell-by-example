@@ -1,6 +1,6 @@
 name: chapter10
 version: 0.1.0.0
-synopsis: "Haskell by Example — Глава 10: Асинхронные эффекты"
+synopsis: "Haskell by Example — Глава 10: Тестирование: hspec и QuickCheck"
 license: MIT
 
 default-extensions:
@@ -22,12 +22,11 @@ default-extensions:
 
 dependencies:
   - base >= 4.18 && < 5
-  - async
-  - stm
-  - time
 
 library:
   source-dirs: src
+  dependencies:
+    - containers
 
 tests:
   chapter10-tests:
@@ -36,4 +35,5 @@ tests:
     dependencies:
       - chapter10
       - hspec
-      - directory
+      - QuickCheck
+      - containers
