@@ -216,6 +216,136 @@ traverse validate items         -- Validation Errors [a]
 
 `traverse` делает то же, что `map` + `sequenceA`, но за один проход.
 
+## Semigroup и Monoid
+
+В определении `Validation` мы использовали `<>` для накопления ошибок. Пришло время разобрать `Semigroup` и `Monoid` подробнее — это одни из самых полезных абстракций в Haskell.
+
+### `Semigroup` — тип с ассоциативной операцией
+
+```haskell
+class Semigroup a where
+  (<>) :: a -> a -> a
+  -- Закон: (x <> y) <> z == x <> (y <> z)   (ассоциативность)
+```
+
+Списки, строки, числа (под сложением или умножением) — всё это полугруппы:
+
+```text
+> [1,2] <> [3,4]
+[1,2,3,4]
+
+> "hello" <> " " <> "world"
+"hello world"
+```
+
+### `Monoid` — полугруппа с нейтральным элементом
+
+```haskell
+class Semigroup a => Monoid a where
+  mempty :: a
+  -- Законы:
+  --   mempty <> x == x                 (левый нейтральный)
+  --   x <> mempty == x                 (правый нейтральный)
+  --   (x <> y) <> z == x <> (y <> z)  (ассоциативность)
+```
+
+```text
+> mempty :: String
+""
+
+> mempty :: [Int]
+[]
+```
+
+### Стандартные newtype-обёртки
+
+Для чисел существуют *две* осмысленные операции: сложение и умножение. Поскольку тип может иметь только один экземпляр `Monoid`, Haskell использует newtype-обёртки:
+
+```haskell
+import Data.Monoid
+
+-- Сложение
+> getSum (Sum 3 <> Sum 4 <> Sum 5)
+12
+
+-- Умножение
+> getProduct (Product 3 <> Product 4)
+12
+
+-- Логическое И
+> getAll (All True <> All True <> All False)
+False
+
+-- Логическое ИЛИ
+> getAny (Any False <> Any False <> Any True)
+True
+
+-- Первый Just
+> getFirst (First Nothing <> First (Just 42) <> First (Just 0))
+Just 42
+
+-- Последний Just
+> getLast (Last (Just 42) <> Last Nothing <> Last (Just 0))
+Just 0
+```
+
+### `foldMap` — map и mconcat в один проход
+
+```haskell
+foldMap :: (Foldable t, Monoid m) => (a -> m) -> t a -> m
+```
+
+`foldMap` — «перевести каждый элемент в моноид и склеить»:
+
+```text
+> foldMap Sum [1, 2, 3, 4, 5]
+Sum {getSum = 15}
+
+> getAll $ foldMap (All . (> 0)) [1, 2, 3]
+True
+
+> getAll $ foldMap (All . (> 0)) [1, -2, 3]
+False
+```
+
+```admonish info title="Знакомый аналог"
+**TypeScript:** `Array.prototype.reduce(fn, initial)` — по сути `foldMap`.
+`initial` — это `mempty`, `fn` — это `<>`.
+
+**Python:** `functools.reduce` с начальным значением — тот же принцип.
+```
+
+### `Endo` — моноид эндоморфизмов
+
+**Эндоморфизм** — функция `a -> a`, которая не меняет тип. Под композицией с `id` такие функции образуют моноид:
+
+```haskell
+import Data.Monoid (Endo(..))
+
+applyAll :: [a -> a] -> a -> a
+applyAll fs = appEndo (foldMap Endo fs)
+```
+
+```text
+> applyAll [(+1), (*2), negate] 3
+-5
+-- negate 3 = -3, (*2) (-3) = -6, (+1) (-6) = -5
+```
+
+`Endo` полезен для паттерна **config builder**: список модификаторов конфигурации, применяемых последовательно. Подробнее — в главе 19.
+
+### Шпаргалка
+
+| Обёртка | Операция `<>` | `mempty` | Пример |
+|---------|--------------|----------|--------|
+| `Sum a` | `(+)` | `0` | `foldMap Sum [1..5]` → `Sum 15` |
+| `Product a` | `(*)` | `1` | `foldMap Product [1..5]` → `Product 120` |
+| `All` | `(&&)` | `True` | `foldMap (All . even) [2,4]` → `All True` |
+| `Any` | `(\|\|)` | `False` | `foldMap (Any . even) [1,3]` → `Any False` |
+| `First a` | первый `Just` | `Nothing` | |
+| `Last a` | последний `Just` | `Nothing` | |
+| `Endo a` | `(.)` | `id` | Композиция функций |
+
 ## Проект: валидация адресной книги
 
 Модуль `Data.AddressBook` определяет:
@@ -340,6 +470,7 @@ Failure ["Город не может быть пустым","Регион не �
 - Создали тип `Validation` с накоплением ошибок через `Semigroup`.
 - Сравнили fail-fast поведение `Either` с аккумулирующим поведением `Validation`.
 - Познакомились с `Traversable`, `traverse` и `sequenceA`.
+- Систематизировали `Semigroup` и `Monoid`: законы, стандартные обёртки (`Sum`, `Product`, `All`, `Any`, `First`, `Last`, `Endo`), `foldMap`.
 - Применили аппликативный стиль к валидации данных адресной книги.
 
 В следующей главе мы перейдём к монаде `IO` и напишем интерактивное приложение адресной книги.

@@ -1,3 +1,7 @@
+# NOTE: mdbook-admonish 1.20.0 requires mdbook 0.4.x
+# If `mdbook build` fails, use: ~/.cargo/bin/mdbook build
+# See: https://github.com/tommilligan/mdbook-admonish/issues/233
+
 [book]
 title = "Haskell by Example"
 language = "ru"
@@ -6,3 +10,10 @@ src = "text"
 
 [build]
 build-dir = "output"
+
+[preprocessor.admonish]
+command = "mdbook-admonish"
+assets_version = "3.1.0" # do not edit: managed by `mdbook-admonish install`
+
+[output.html]
+additional-css = ["text/mdbook-admonish.css"]

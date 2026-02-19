@@ -70,13 +70,13 @@ rightValues = undefined
 type MyLens s a = forall f. Functor f => (a -> f a) -> s -> f s
 
 myView :: MyLens s a -> s -> a
-myView = undefined
+myView _ _ = undefined
 
 myOver :: MyLens s a -> (a -> a) -> s -> s
-myOver = undefined
+myOver _ _ _ = undefined
 
 mySet :: MyLens s a -> a -> s -> s
-mySet = undefined
+mySet _ _ _ = undefined
 
 fstL :: MyLens (a, b) a
 fstL = undefined

@@ -21,6 +21,7 @@ default-extensions:
   - MultiParamTypeClasses
   - GADTs
   - FlexibleContexts
+  - TypeOperators
 
 dependencies:
   - base >= 4.18 && < 5

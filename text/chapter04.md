@@ -286,6 +286,100 @@ resistor = Ohm 500.0
 
 `newtype` — мощный инструмент для повышения типобезопасности без рантайм-расходов.
 
+## Smart Constructors и «Parse, Don't Validate»
+
+### Зачем скрывать конструкторы
+
+`newtype Volt = Volt Double` защищает от путаницы *типов*, но не от некорректных *значений*. Ничто не мешает написать `Volt (-100)` — бессмысленное отрицательное напряжение.
+
+**Smart constructor** — паттерн, при котором конструктор типа скрыт от пользователя, а создание значений проходит через функцию-валидатор:
+
+```haskell
+module Domain.Email
+  ( Email          -- тип экспортируется
+  , mkEmail        -- smart constructor экспортируется
+  , unEmail        -- accessor экспортируется
+  -- Email(..) НЕ экспортируется — конструктор скрыт!
+  ) where
+
+newtype Email = Email String deriving (Show, Eq)
+
+unEmail :: Email -> String
+unEmail (Email e) = e
+
+mkEmail :: String -> Either String Email
+mkEmail raw
+  | null raw          = Left "Email не может быть пустым"
+  | '@' `notElem` raw = Left "Email должен содержать '@'"
+  | otherwise         = Right (Email raw)
+```
+
+Теперь создать `Email` можно *только* через `mkEmail`, который проверяет инварианты. Код за пределами модуля `Domain.Email` не имеет доступа к конструктору `Email` напрямую.
+
+```admonish tip title="Правило буравчика"
+Если тип имеет инвариант (email содержит `@`, возраст неотрицателен, список непуст) —
+конструктор должен быть скрыт. Экспортируйте только smart constructor.
+```
+
+```admonish info title="Знакомый аналог"
+**TypeScript:** `private constructor` + `static create()` в классах.
+Но в TS нельзя *запретить* `new Email("invalid")` извне модуля так же надёжно,
+как в Haskell — не экспортировать конструктор.
+Библиотека [Zod](https://zod.dev/) реализует «parse, don't validate» в runtime.
+
+**Python:** `__init__` + `@classmethod` factory. Нет enforcement на уровне типов.
+[Pydantic](https://docs.pydantic.dev/) — аналог подхода, но только в runtime.
+```
+
+### Parse, Don't Validate
+
+Alexis King (2019) сформулировала важный принцип: **парсинг** и **валидация** — разные вещи.
+
+- **Валидация** проверяет данные, но результат имеет *тот же тип*: `String -> Bool`. Информация о прохождении проверки теряется — ничто не мешает использовать невалидированную строку.
+- **Парсинг** преобразует данные в *новый тип*: `String -> Either Error Email`. Тип `Email` *несёт доказательство* пройденной валидации. После парсинга повторная проверка не нужна.
+
+```haskell
+-- Валидация: информация теряется
+validateEmail :: String -> Bool
+validateEmail s = '@' `elem` s  -- результат Bool — не помогает type checker'у
+
+-- Парсинг: информация сохраняется в типе
+parseEmail :: String -> Either String Email
+parseEmail = mkEmail  -- результат Email — гарантия пройденной проверки
+```
+
+Smart constructors — это именно «parse, don't validate» в действии.
+
+### Newtypes для семантической защиты
+
+`newtype` защищает не только от опечаток, но и от **семантического дрифта** — ситуации, когда одинаковый тип означает разные вещи в разных контекстах:
+
+```haskell
+-- БЕЗ newtypes — тихая ошибка при смене единиц
+processPayment :: Int -> IO ()  -- центы? доллары? неизвестно
+
+-- С newtypes — несовместимость видна на уровне типов
+newtype Cents   = Cents   { unCents   :: Int } deriving (Show, Eq)
+newtype Dollars = Dollars { unDollars :: Int } deriving (Show, Eq)
+
+processPayment :: Cents -> IO ()
+processPayment (Cents amount) = putStrLn $ "Списано: " <> show amount <> " центов"
+
+-- Конвертация — явная, не случайная:
+toCents :: Dollars -> Cents
+toCents (Dollars d) = Cents (d * 100)
+```
+
+```admonish warning title="Границы программы ≠ границы системы"
+Smart constructors и «Parse, Don't Validate» гарантируют инварианты *внутри одного
+запущенного процесса*. Но при сериализации (JSON, Kafka, БД) данные пересекают границу
+версий: старый воркер не знает о новом конструкторе `Refunded`, а `amount :: Int` может
+означать центы в v1 и доллары в v2 (семантический дрифт).
+
+Решения: schema registries, versioned serialization (protobuf field numbers),
+expand-and-contract миграции. Подробнее — в главе 18.
+```
+
 ## Ограничивающий прямоугольник
 
 В модуле `Data.Picture` определена функция `bounds`, которая вычисляет минимальный ограничивающий прямоугольник для картинки. Она использует все изученные приёмы:
@@ -384,6 +478,7 @@ describe = \case
 - Освоили сопоставление с образцом: литералы, переменные, wildcards, конструкторы, вложенные и именованные образцы.
 - Разобрали guards, `case`, `let` и `where`.
 - Узнали о `newtype` и его использовании для типобезопасности.
+- Познакомились с паттернами Smart Constructor и «Parse, Don't Validate».
 - Создали библиотеку геометрических фигур с вычислением ограничивающего прямоугольника.
 
 АТД и паттерн-матчинг — одни из самых мощных и часто используемых инструментов в Haskell. В оставшейся части книги мы будем активно их применять.

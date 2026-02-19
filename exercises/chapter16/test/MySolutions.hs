@@ -45,9 +45,23 @@ prettyExpr = undefined
 --
 -- Затем реализуйте containerFromList через foldl', insert и empty.
 
--- instance Container [a] where ...
--- instance Ord a => Container (Set.Set a) where ...
--- instance Ord k => Container (Map.Map k v) where ...
+instance Container [a] where
+  type Elem [a] = a
+  empty  = undefined
+  insert = undefined
+  toList = undefined
+
+instance Ord a => Container (Set.Set a) where
+  type Elem (Set.Set a) = a
+  empty  = undefined
+  insert = undefined
+  toList = undefined
+
+instance Ord k => Container (Map.Map k v) where
+  type Elem (Map.Map k v) = (k, v)
+  empty  = undefined
+  insert = undefined
+  toList = undefined
 
 containerFromList :: Container c => [Elem c] -> c
 containerFromList = undefined

@@ -18,11 +18,16 @@ $ curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sh
 
 В процессе установки GHCup предложит установить GHC, Stack и HLS. Соглашайтесь на все компоненты.
 
+```admonish tip title="Знакомый аналог"
+Если вы работали с Node.js — GHCup похож на **nvm**: управляет версиями рантайма и сопутствующих инструментов.
+В Python аналогом будет **pyenv**.
+```
+
 После установки проверьте, что всё работает:
 
 ```text
 $ ghc --version
-The Glorious Glasgow Haskell Compilation System, version 9.6.6
+The Glorious Glasgow Haskell Compilation System, version 9.6.7
 
 $ stack --version
 Version 3.7.1 ...
@@ -92,13 +97,13 @@ tests:
 В корне репозитория лежит `stack.yaml` — конфигурация Stack для всего проекта:
 
 ```yaml
-resolver: lts-22.43       # набор пакетов (включает GHC 9.6.6)
+resolver: lts-22.44       # набор пакетов (включает GHC 9.6.7)
 
 packages:
   - exercises/chapter02    # список пакетов проекта
 ```
 
-**Resolver** (решатель) — это снапшот Stackage: фиксированный набор версий пакетов, проверенных на совместимость. Когда в `package.yaml` вы указываете зависимость `hspec`, Stack берёт ту версию `hspec`, которая входит в снапшот `lts-22.43`.
+**Resolver** (решатель) — это снапшот Stackage: фиксированный набор версий пакетов, проверенных на совместимость. Когда в `package.yaml` вы указываете зависимость `hspec`, Stack берёт ту версию `hspec`, которая входит в снапшот `lts-22.44`.
 
 ### Модули
 

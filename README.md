@@ -25,7 +25,7 @@
 
 ## Требования
 
-- [Stack](https://docs.haskellstack.org/) (resolver: lts-22.43)
+- [Stack](https://docs.haskellstack.org/) (resolver: lts-22.44)
 - [mdBook](https://rust-lang.github.io/mdBook/) (для сборки книги)
 
 ## Быстрый старт

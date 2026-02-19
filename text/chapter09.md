@@ -272,6 +272,82 @@ mapM :: (a -> IO b) -> [a] -> IO [b]
 
     *Подсказка:* `recordState` — это `modifyIORef ref (book :)`. `undoLastChange` — разбор списка: если есть хотя бы два элемента, убрать голову и вернуть новую.
 
+## Functional Core, Imperative Shell
+
+Оглянемся на нашу адресную книгу. Заметьте: чистые функции (`findByName`, `insertEntry`, `deleteEntry`) отделены от IO-кода (`loop`, `main`). Это не случайность — это архитектурный паттерн, который Haskell *гарантирует* на уровне типов.
+
+### Паттерн
+
+Gary Bernhardt назвал это **«Functional Core, Imperative Shell»** (FCIS):
+
+- **Functional Core** — чистые функции, содержащие *всю* бизнес-логику. Нет IO, нет побочных эффектов. Легко тестировать, легко рассуждать.
+- **Imperative Shell** — тонкий слой IO на границах: ввод-вывод, сеть, файлы. Минимум логики.
+
+```text
+┌────────────────────────────────────────┐
+│          Imperative Shell (IO)         │
+│  main, loop, readFile, putStrLn, IORef │
+│                                        │
+│    ┌──────────────────────────────┐    │
+│    │     Functional Core (pure)   │    │
+│    │  findByName, insertEntry,    │    │
+│    │  deleteEntry, showEntry,     │    │
+│    │  parseCommand, validateEntry │    │
+│    └──────────────────────────────┘    │
+│                                        │
+└────────────────────────────────────────┘
+```
+
+### Почему Haskell особенный
+
+В TypeScript или Python FCIS — это *соглашение*. Ничто не мешает вызвать `fetch()` или `print()` из «чистой» функции. Дисциплина — на совести разработчика.
+
+В Haskell это *гарантия типовой системы*. Чистая функция `findByName :: String -> AddressBook -> [Entry]` *физически не может* обратиться к сети или файлу — у неё нет `IO` в типе. Компилятор не пропустит.
+
+```admonish info title="Знакомый аналог"
+**TypeScript:** Паттерн FCIS реализуем, но не enforced. `function findByName(name: string, book: Entry[]): Entry[]` *может* вызвать `fetch()` — компилятор не заметит.
+
+**Python:** Аналогично — convention-only. `def find_by_name(name, book)` может делать что угодно.
+
+В Haskell нарушение — *ошибка компиляции*.
+```
+
+### Three Layer Cake
+
+Matt Parsons развил идею FCIS в паттерн **«Three Layer Cake»** для production-приложений:
+
+1. **Бизнес-логика** — чистые функции и типы.
+2. **Эффекты** — абстрактные интерфейсы (type classes или effect systems).
+3. **Интерпретация** — конкретная реализация (IO, тесты, mock'и).
+
+Мы вернёмся к этому в главе 12 (стеки монад-трансформеров) и главе 18 (веб-приложение).
+
+### Практический совет
+
+Хорошее правило: **максимально разделяйте принятие решений и выполнение действий**.
+
+```haskell
+-- ПЛОХО: логика смешана с IO
+processCommand :: IORef AddressBook -> String -> IO ()
+processCommand ref input = case words input of
+  ["find", name] -> do
+    book <- readIORef ref
+    let results = filter (\e -> entryName e == name) book  -- логика внутри IO!
+    mapM_ (putStrLn . showEntry) results
+
+-- ХОРОШО: логика вынесена в чистую функцию
+findByName :: String -> AddressBook -> [Entry]
+findByName name = filter (\e -> entryName e == name)
+
+processCommand :: IORef AddressBook -> String -> IO ()
+processCommand ref input = case words input of
+  ["find", name] -> do
+    book <- readIORef ref
+    mapM_ (putStrLn . showEntry) (findByName name book)
+```
+
+Чистые функции можно тестировать без IO, документировать через типы и переиспользовать.
+
 ## Заключение
 
 В этой главе мы:
@@ -280,6 +356,7 @@ mapM :: (a -> IO b) -> [a] -> IO [b]
 - Применили `do`-нотацию (из предыдущей главы) к IO-действиям.
 - Научились работать с файлами через `readFile` / `writeFile`.
 - Освоили `IORef` — мутабельные ссылки в `IO`.
+- Разобрали паттерн «Functional Core, Imperative Shell» — архитектурный принцип, который Haskell гарантирует через типы.
 - Применили всё это к CLI-приложению адресной книги.
 
 В следующей главе мы познакомимся с конкурентностью в Haskell: `async`, `MVar`, `STM` и параллельное выполнение.
