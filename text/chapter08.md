@@ -201,8 +201,19 @@ processThreeSteps tid store =
   step3 tid store2
 ```
 
-```admonish note title="Заглядывая вперёд"
-Функция `andThen` — это в точности оператор `>>=` (bind) для `Either`. В [главе 12](chapter12.md) мы узнаем, что `Either` — монада, и научимся использовать `>>=` и `do`-нотацию для элегантных цепочек. А пока `andThen` и `case` — наши инструменты.
+```admonish note title="Заглядывая вперёд: do-нотация для Either"
+Функция `andThen` — это в точности оператор `>>=` (bind) для `Either`. В [главе 12](chapter12.md) мы узнаем, что `Either` — монада, и научимся писать такой код:
+
+```haskell
+completeIfNotDone :: TaskId -> TaskStore -> Either AppError TaskStore
+completeIfNotDone tid store = do
+  task <- findTaskSafe tid store
+  when (taskStatus task == Done) $
+    Left (InvalidInput "Задача уже завершена")
+  updateStatus Done task store
+```
+
+Вместо вложенных `case` — линейный поток операций. `Either` — монада, и `do`-нотация автоматически пробрасывает ошибки вверх. Мы вернёмся к этому в главе 12.
 ```
 
 ### Мост между Maybe и Either

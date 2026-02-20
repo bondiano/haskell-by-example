@@ -26,6 +26,16 @@ type String = [Char]
 
 Модуль `Data.Text` предоставляет тип `Text` — компактное представление текста в кодировке UTF-16. Внутри — непрерывный массив, а не связный список.
 
+```admonish warning title="Почему Text, а не String?"
+`String = [Char]` — связный список символов. Медленно и расточительно:
+
+- Каждый символ — отдельный узел списка (около 40 байт вместо 1–4)
+- Конкатенация, поиск, длина — O(n) с большими константами
+- Юникод работает корректно, но медленно
+
+**Правило:** В production-коде ВСЕГДА используйте `Text` для текстовых данных. `String` — только для учебных примеров и взаимодействия с legacy API.
+```
+
 ### Подключение
 
 ```haskell
@@ -33,8 +43,17 @@ import Data.Text (Text)
 import Data.Text qualified as T
 ```
 
-```admonish note title="Квалифицированные импорты"
-Паттерн `import Module qualified as M` — стандартная практика для модулей-контейнеров. Так мы избегаем конфликтов имён: `T.length` — длина `Text`, `length` — длина списка. Этот паттерн используется для `Data.Map`, `Data.Set`, `Data.Text` и многих других модулей.
+```admonish note title="Квалифицированные импорты — стандарт"
+Паттерн `import Module qualified as M` — стандартная практика для модулей-контейнеров:
+
+```haskell
+import Data.Text (Text)
+import Data.Text qualified as T       -- НЕ "as Text"
+import Data.Map.Strict qualified as Map
+import Data.Set qualified as Set
+```
+
+Тип импортируем напрямую, функции — квалифицированно. Так мы избегаем конфликтов имён: `T.length` — длина `Text`, `length` — длина списка. Этот паттерн используется для `Data.Map`, `Data.Set`, `Data.Text` и многих других модулей.
 ```
 
 ### OverloadedStrings

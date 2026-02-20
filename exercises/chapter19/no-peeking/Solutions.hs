@@ -55,7 +55,7 @@ addNat (S n) m = S (addNat n m)
 
 -- | Упражнение 6: Реализация HasKey.
 instance HasKey Task where
-  type Key Task = String
+  type Key Task = Text
   getKey = taskTitle
 
 instance HasKey (k, v) where

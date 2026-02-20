@@ -191,8 +191,25 @@ copyFile from to = do
   putStrLn $ "Скопировано: " <> from <> " -> " <> to
 ```
 
-```admonish warning title="Кодировки"
-Функция `readFile` из `Prelude` работает с `String` (списком `Char`). Для продакшн-кода рекомендуется использовать `Data.Text.IO.readFile` из пакета `text`, который корректно обрабатывает UTF-8 и значительно эффективнее. Мы перейдём на `Text` в следующих главах.
+```admonish warning title="Text-based IO для production"
+Функция `readFile` из `Prelude` работает с `String` (списком `Char`) и неэффективна. В production-коде ВСЕГДА используйте `Data.Text.IO`:
+
+```haskell
+import Data.Text (Text)
+import Data.Text.IO qualified as TIO
+
+-- Вместо readFile :: FilePath -> IO String
+TIO.readFile  :: FilePath -> IO Text
+TIO.writeFile :: FilePath -> Text -> IO ()
+TIO.appendFile :: FilePath -> Text -> IO ()
+
+-- И для стандартных потоков:
+TIO.getLine :: IO Text
+TIO.putStr  :: Text -> IO ()
+TIO.putStrLn :: Text -> IO ()
+```
+
+`Data.Text.IO` корректно обрабатывает UTF-8, эффективен по памяти и производительности. Мы используем `Text` во всех последующих главах.
 ```
 
 ## IORef — мутабельные ссылки
@@ -221,10 +238,40 @@ counter = do
   putStrLn $ "Счётчик: " <> show val  -- "Счётчик: 3"
 ```
 
-```admonish warning title="Не злоупотребляйте IORef"
-`IORef` — полезный инструмент, но он нарушает принцип чистоты. Используйте его только когда это действительно необходимо (например, в main-цикле программы). Для большинства задач предпочтительнее передавать состояние явно через аргументы функций или использовать `State`-монаду (см. [главу 12](chapter12.md)).
+```admonish warning title="Два подхода к состоянию в IO"
+**Approach A: Explicit state** (рекомендуется)
 
-Практическое правило: если можете решить задачу без `IORef` — решайте без него.
+```haskell
+loop :: TaskStore -> TaskId -> IO ()
+loop store nextId = do
+  command <- getLine
+  case parseCommand command of
+    Just cmd -> do
+      let (newStore, newId) = handleCommand cmd store nextId
+      loop newStore newId
+    Nothing -> loop store nextId
+```
+
+Состояние передаётся явно. Легко тестировать, понимать, рефакторить.
+
+**Approach B: IORef** (когда неудобно передавать явно)
+
+```haskell
+loop :: IORef (TaskStore, TaskId) -> IO ()
+loop ref = do
+  command <- getLine
+  (store, nextId) <- readIORef ref
+  case parseCommand command of
+    Just cmd -> do
+      let (newStore, newId) = handleCommand cmd store nextId
+      writeIORef ref (newStore, newId)
+      loop ref
+    Nothing -> loop ref
+```
+
+Используйте `IORef` только когда явная передача состояния действительно неудобна. Для большинства задач предпочтительнее **Approach A** или `State`-монада (см. [главу 12](chapter12.md)).
+
+**Практическое правило:** Если можете решить без `IORef` — решайте без него.
 ```
 
 ## Functional Core, Imperative Shell
@@ -298,6 +345,8 @@ data Command
 Парсер команд — чистая функция. Она не выполняет IO, а лишь анализирует строку:
 
 ```haskell
+import Text.Read (readMaybe)
+
 parseCommand :: String -> Either String Command
 parseCommand input = case words input of
   ["add", title, priority] ->
@@ -305,13 +354,13 @@ parseCommand input = case words input of
       Just p  -> Right (CmdAdd (Text.pack title) p)
       Nothing -> Left "Неизвестный приоритет. Используйте: low, medium, high"
   ["complete", idStr] ->
-    case reads idStr of
-      [(n, "")] -> Right (CmdComplete n)
-      _         -> Left "Некорректный ID задачи"
+    case readMaybe idStr of
+      Just n  -> Right (CmdComplete n)
+      Nothing -> Left "Некорректный ID задачи"
   ["delete", idStr] ->
-    case reads idStr of
-      [(n, "")] -> Right (CmdDelete n)
-      _         -> Left "Некорректный ID задачи"
+    case readMaybe idStr of
+      Just n  -> Right (CmdDelete n)
+      Nothing -> Left "Некорректный ID задачи"
   ["list"]     -> Right (CmdList Nothing)
   ["help"]     -> Right CmdHelp
   ["quit"]     -> Right CmdQuit

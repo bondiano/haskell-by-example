@@ -37,6 +37,7 @@ library
       base >=4.18 && <5
     , containers
     , mtl
+    , text
     , transformers
   default-language: Haskell2010
 
@@ -70,5 +71,6 @@ test-suite chapter13-tests
     , containers
     , hspec
     , mtl
+    , text
     , transformers
   default-language: Haskell2010

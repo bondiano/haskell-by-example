@@ -7,10 +7,10 @@ import Test.Hspec
 main :: IO ()
 main = hspec $ do
   -- Тестовые данные
-  let task1 = Task "Купить молоко" Low Todo
-      task2 = Task "Написать отчёт" High InProgress
-      task3 = Task "Полить цветы" Medium Done
-      task4 = Task "Подготовить презентацию" High Todo
+  let task1 = Task "Купить молоко" "" Low Todo
+      task2 = Task "Написать отчёт" "" High InProgress
+      task3 = Task "Полить цветы" "" Medium Done
+      task4 = Task "Подготовить презентацию" "" High Todo
 
   describe "Упражнение 1: eval (базовый)" $ do
     it "вычисляет LitInt 42" $

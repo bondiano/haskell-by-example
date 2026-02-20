@@ -5,6 +5,7 @@ import Data.Map.Strict qualified as Map
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
+import Text.Read (readMaybe)
 
 -- | Идентификатор задачи.
 newtype TaskId = TaskId Int
@@ -25,6 +26,7 @@ data Status = Todo | InProgress | Done
 -- | Задача трекера.
 data Task = Task
   { taskTitle :: Text
+  , taskDescription :: Text
   , taskPriority :: Priority
   , taskStatus :: Status
   , taskTags :: Set Tag
@@ -57,11 +59,7 @@ parseCommand :: String -> Maybe Command
 parseCommand input = case words input of
   ["add", title] -> Just (AddCmd title)
   ["list"] -> Just ListCmd
-  ["done", n] -> case reads n of
-    [(i, "")] -> Just (DoneCmd (TaskId i))
-    _ -> Nothing
-  ["show", n] -> case reads n of
-    [(i, "")] -> Just (ShowCmd (TaskId i))
-    _ -> Nothing
+  ["done", n] -> DoneCmd . TaskId <$> readMaybe n
+  ["show", n] -> ShowCmd . TaskId <$> readMaybe n
   ["quit"] -> Just QuitCmd
   _ -> Nothing

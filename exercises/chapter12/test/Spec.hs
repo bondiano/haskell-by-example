@@ -1,6 +1,8 @@
 module Main where
 
 import Data.Map.Strict qualified as Map
+import Data.Text (Text)
+import Data.Text qualified as T
 import Test.Hspec
 
 import MySolutions
@@ -16,14 +18,14 @@ main = hspec $ do
       case completeTask (TaskId 1) exampleStore of
         Right store ->
           lookupTask (TaskId 1) store
-            `shouldBe` Just (Task "Купить молоко" Medium Done)
+            `shouldBe` Just (Task "Купить молоко" "" Medium Done)
         Left err -> expectationFailure $ "Ожидали Right, получили: " ++ show err
 
     it "завершает задачу со статусом InProgress" $
       case completeTask (TaskId 2) exampleStore of
         Right store ->
           lookupTask (TaskId 2) store
-            `shouldBe` Just (Task "Написать отчёт" High Done)
+            `shouldBe` Just (Task "Написать отчёт" "" High Done)
         Left err -> expectationFailure $ "Ожидали Right, получили: " ++ show err
 
     it "ошибка AlreadyDone для уже завершённой задачи" $
@@ -84,7 +86,7 @@ main = hspec $ do
       case processCommands cfg [CompleteCmd (TaskId 1)] exampleStore of
         Right store ->
           lookupTask (TaskId 1) store
-            `shouldBe` Just (Task "Купить молоко" Medium Done)
+            `shouldBe` Just (Task "Купить молоко" "" Medium Done)
         Left err -> expectationFailure $ "Ожидали Right, получили: " ++ show err
 
     it "CompleteCmd для несуществующей задачи — ошибка" $
@@ -134,21 +136,21 @@ main = hspec $ do
   -- ===========================================================
   describe "Упражнение 5: validateTask" $ do
     it "валидная задача проходит проверку" $
-      validateTask (Task "Тест" Medium Todo)
-        `shouldBe` Right (Task "Тест" Medium Todo)
+      validateTask (Task "Тест" "" Medium Todo)
+        `shouldBe` Right (Task "Тест" "" Medium Todo)
 
     it "пустое название → ошибка" $
-      validateTask (Task "" High InProgress)
+      validateTask (Task "" "" High InProgress)
         `shouldBe` Left "Пустое название"
 
     it "название длиннее 200 символов → ошибка" $
-      validateTask (Task (replicate 201 'x') Low Todo)
+      validateTask (Task (T.pack (replicate 201 'x')) "" Low Todo)
         `shouldBe` Left "Название слишком длинное"
 
     it "название ровно 200 символов — допустимо" $
-      let title = replicate 200 'x'
-       in validateTask (Task title Low Todo)
-            `shouldBe` Right (Task title Low Todo)
+      let title = T.pack (replicate 200 'x')
+       in validateTask (Task title "" Low Todo)
+            `shouldBe` Right (Task title "" Low Todo)
 
   -- ===========================================================
   -- Упражнение 6: allTaskCombinations

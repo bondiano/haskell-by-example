@@ -21,11 +21,11 @@ main = hspec $ do
         `shouldBe` TaskStats 0 0 0 0
 
     it "один элемент — Todo High" $
-      computeStatsStrict [Task "Тест" High Todo]
+      computeStatsStrict [Task "Тест" "" High Todo]
         `shouldBe` TaskStats 1 1 0 1
 
     it "один элемент — Done Low" $
-      computeStatsStrict [Task "Тест" Low Done]
+      computeStatsStrict [Task "Тест" "" Low Done]
         `shouldBe` TaskStats 1 0 1 0
 
   describe "Упражнение 2: badSum и goodSum" $ do

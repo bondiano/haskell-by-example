@@ -270,6 +270,34 @@ saveStore store = do
     Right ()                -> pure ()
 ```
 
+````admonish tip title="Рефакторинг вложенных case"
+Обратите внимание на `loadStore`: вложенный `case` можно упростить благодаря монаде `Either`:
+
+```haskell
+-- Было:
+case result of
+  Left err -> throwError err
+  Right contents -> case parseStore contents of
+    Left err    -> throwError (StorageError err)
+    Right store -> pure store
+
+-- Стало:
+case result of
+  Left (e :: IOException) -> throwError (StorageError (show e))
+  Right contents -> do
+    either (throwError . StorageError) pure (parseStore contents)
+```
+
+Или ещё проще — используйте комбинаторы из `Control.Monad.Except`:
+
+```haskell
+-- liftEither :: MonadError e m => Either e a -> m a
+liftEither (parseStore contents)
+```
+
+Когда вы видите `case ... of { Left err -> throwError err; Right x -> pure x }` — это сигнал, что можно использовать `liftEither`.
+````
+
 Ни одна функция не упоминает `ReaderT`, `ExceptT` или `IO` напрямую. Всё выражено через ограничения.
 
 ## Запуск стека: runReaderT, runExceptT

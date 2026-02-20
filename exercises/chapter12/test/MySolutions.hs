@@ -3,6 +3,7 @@ module MySolutions where
 import Control.Monad (foldM)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Text (Text)
 
 import TaskTracker
 
@@ -122,7 +123,7 @@ Right (Task "Тест" Medium Todo)
 >>> validateTask (Task "" Medium Todo)
 Left "Пустое название"
 -}
-validateTask :: Task -> Either String Task
+validateTask :: Task -> Either Text Task
 validateTask = undefined
 
 -- ============================================================

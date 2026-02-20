@@ -29,6 +29,30 @@ library:
     - text
     - aeson
     - containers
+    - servant
+    - servant-server
+    - warp
+    - persistent
+    - persistent-sqlite
+    - persistent-template
+    - monad-logger
+    - resourcet
+    - resource-pool
+    - transformers
+    - mtl
+    - http-types
+    - bytestring
+
+executables:
+  chapter17-server:
+    main: Main.hs
+    source-dirs: app
+    dependencies:
+      - chapter17
+      - servant-server
+      - warp
+      - monad-logger
+      - persistent-sqlite
 
 tests:
   chapter17-tests:
@@ -37,6 +61,18 @@ tests:
     dependencies:
       - chapter17
       - hspec
+      - hspec-wai
+      - hspec-wai-json
       - text
       - aeson
       - containers
+      - servant
+      - servant-server
+      - wai
+      - wai-extra
+      - http-types
+      - bytestring
+      - persistent
+      - persistent-sqlite
+      - monad-logger
+      - resourcet

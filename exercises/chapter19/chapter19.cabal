@@ -41,6 +41,7 @@ library
   build-depends:
       base >=4.18 && <5
     , containers
+    , text
   default-language: Haskell2010
 
 test-suite chapter19-tests
@@ -77,4 +78,5 @@ test-suite chapter19-tests
     , chapter19
     , containers
     , hspec
+    , text
   default-language: Haskell2010

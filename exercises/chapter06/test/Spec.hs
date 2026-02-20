@@ -12,9 +12,9 @@ import Data.Text (Text)
 main :: IO ()
 main = hspec $ do
   -- Тестовые данные
-  let task1 = Task "Релиз" High Todo (Set.fromList ["dev", "urgent"])
-      task2 = Task "Документация" Medium InProgress (Set.fromList ["docs"])
-      task3 = Task "Рефакторинг" Low Done (Set.fromList ["dev", "tech-debt"])
+  let task1 = Task "Релиз" "Подготовить релиз v2.0" High Todo (Set.fromList ["dev", "urgent"])
+      task2 = Task "Документация" "Обновить README и API docs" Medium InProgress (Set.fromList ["docs"])
+      task3 = Task "Рефакторинг" "Переписать парсер на Megaparsec" Low Done (Set.fromList ["dev", "tech-debt"])
       store =
         addTask 1 task1
           . addTask 2 task2

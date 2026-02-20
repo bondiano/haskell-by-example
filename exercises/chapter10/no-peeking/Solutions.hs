@@ -19,7 +19,7 @@ import TaskTracker
 -}
 addTaskSpec :: Spec
 addTaskSpec = do
-  let task = Task "Тестовая задача" Medium Todo
+  let task = Task "Тестовая задача" "" Medium Todo
       store = addTask (TaskId 1) task emptyStore
 
   it "lookupTask находит добавленную задачу" $
@@ -29,11 +29,11 @@ addTaskSpec = do
     storeSize store `shouldBe` 1
 
   it "добавление второй задачи — размер 2" $ do
-    let store2 = addTask (TaskId 2) (Task "Вторая" High Todo) store
+    let store2 = addTask (TaskId 2) (Task "Вторая" "" High Todo) store
     storeSize store2 `shouldBe` 2
 
   it "перезапись ключа не увеличивает размер" $ do
-    let store2 = addTask (TaskId 1) (Task "Обновлённая" Low Done) store
+    let store2 = addTask (TaskId 1) (Task "Обновлённая" "" Low Done) store
     storeSize store2 `shouldBe` 1
 
 -- ============================================================
@@ -44,19 +44,19 @@ addTaskSpec = do
 filterTasksSpec :: Spec
 filterTasksSpec = do
   let tasks =
-        [ Task "Задача 1" High Todo
-        , Task "Задача 2" Low Done
-        , Task "Задача 3" Medium Todo
-        , Task "Задача 4" High Done
+        [ Task "Задача 1" "" High Todo
+        , Task "Задача 2" "" Low Done
+        , Task "Задача 3" "" Medium Todo
+        , Task "Задача 4" "" High Done
         ]
 
   it "ByStatus Todo — только задачи со статусом Todo" $
     filterTasks (ByStatus Todo) tasks
-      `shouldBe` [Task "Задача 1" High Todo, Task "Задача 3" Medium Todo]
+      `shouldBe` [Task "Задача 1" "" High Todo, Task "Задача 3" "" Medium Todo]
 
   it "ByPriority High — только задачи с приоритетом High" $
     filterTasks (ByPriority High) tasks
-      `shouldBe` [Task "Задача 1" High Todo, Task "Задача 4" High Done]
+      `shouldBe` [Task "Задача 1" "" High Todo, Task "Задача 4" "" High Done]
 
   it "AllTasks — все задачи без фильтрации" $
     filterTasks AllTasks tasks `shouldBe` tasks
@@ -74,14 +74,14 @@ trackerProperties = do
   it "addTask увеличивает размер на 1 (новый ключ)" $
     property $ \(Positive n) ->
       let tid = TaskId n
-          task = Task "Тест" Medium Todo
+          task = Task "Тест" "" Medium Todo
           store = emptyStore
        in storeSize (addTask tid task store) == storeSize store + 1
 
   it "removeTask после addTask — исходное хранилище" $
     property $ \(Positive n) ->
       let tid = TaskId n
-          task = Task "Тест" Medium Todo
+          task = Task "Тест" "" Medium Todo
        in removeTask tid (addTask tid task emptyStore) == emptyStore
 
   it "filterTasks AllTasks == id" $

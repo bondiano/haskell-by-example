@@ -31,6 +31,27 @@ jobs:
       - name: Initialize mdbook-admonish
         run: mdbook-admonish install
 
+      # Install mdbook-cmdrun for running code examples during build
+      - name: Install mdbook-cmdrun
+        run: cargo install mdbook-cmdrun --version 0.7.3
+
+      # Setup Haskell Stack for executing runnable examples in examples/
+      - name: Setup Haskell Stack
+        uses: haskell-actions/setup@v2
+        with:
+          enable-stack: true
+          stack-version: 'latest'
+
+      - name: Cache Stack dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.stack
+            .stack-work
+          key: ${{ runner.os }}-stack-${{ hashFiles('stack.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-stack-
+
       - name: Build book
         run: mdbook build
 

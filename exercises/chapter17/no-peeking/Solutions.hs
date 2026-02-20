@@ -1,10 +1,15 @@
 module Solutions where
 
+import Data.Int (Int64)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Database.Persist
+import Servant
 
+import API
 import TaskTracker
 
 -- ============================================================
@@ -28,11 +33,13 @@ handleCompleteLogic task
 -}
 computeStatsMap :: [Task] -> Map Text Int
 computeStatsMap tasks =
-  let statusKey Todo = "todo"
-      statusKey InProgress = "in_progress"
-      statusKey Done = "done"
-      keys = map (statusKey . taskStatus) tasks
-   in Map.fromListWith (+) [(k, 1) | k <- keys]
+  let
+    statusKey Todo = "todo"
+    statusKey InProgress = "in_progress"
+    statusKey Done = "done"
+    keys = map (statusKey . taskStatus) tasks
+   in
+    Map.fromListWith (+) [(k, 1) | k <- keys]
 
 -- ============================================================
 -- Упражнение 3: Пагинация
@@ -71,8 +78,8 @@ validatePriority input =
 -- ============================================================
 
 -- | Используем priorityToText и statusToText для конвертации.
-entityToResponse :: Int -> Task -> TaskResponse
-entityToResponse eid task =
+entityToResponsePure :: Int64 -> Task -> TaskResponse
+entityToResponsePure eid task =
   TaskResponse
     { responseId = eid
     , responseTitle = taskTitle task
@@ -81,39 +88,36 @@ entityToResponse eid task =
     }
 
 -- ============================================================
--- Упражнение 7: Конвертация Priority ↔ Text
+-- Упражнение 7: Пагинированный список задач
 -- ============================================================
 
--- | Простое сопоставление с образцом.
-priorityToText :: Priority -> Text
-priorityToText Low = "low"
-priorityToText Medium = "medium"
-priorityToText High = "high"
-
--- | Приводим к нижнему регистру и сопоставляем.
-textToPriority :: Text -> Either Text Priority
-textToPriority t =
-  case T.toLower t of
-    "low" -> Right Low
-    "medium" -> Right Medium
-    "high" -> Right High
-    _ -> Left ("Неизвестный приоритет: " <> t)
+-- | Извлекаем page и per_page, применяем LimitTo и OffsetBy.
+handleListPaginated ::
+  ConnectionPool ->
+  Maybe Int ->
+  Maybe Int ->
+  Handler [TaskResponse]
+handleListPaginated pool mPage mPerPage = do
+  let page = fromMaybe 1 mPage
+      perPage = fromMaybe 20 mPerPage
+      offset = (page - 1) * perPage
+  items <- runDB pool $ selectList [] [Asc TaskItemTitle, LimitTo perPage, OffsetBy offset]
+  pure (map entityToResponse items)
 
 -- ============================================================
--- Упражнение 8: Конвертация Status ↔ Text
+-- Упражнение 8: Поиск по заголовку
 -- ============================================================
 
--- | Простое сопоставление с образцом.
-statusToText :: Status -> Text
-statusToText Todo = "todo"
-statusToText InProgress = "in_progress"
-statusToText Done = "done"
-
--- | Приводим к нижнему регистру и сопоставляем.
-textToStatus :: Text -> Either Text Status
-textToStatus t =
-  case T.toLower t of
-    "todo" -> Right Todo
-    "in_progress" -> Right InProgress
-    "done" -> Right Done
-    _ -> Left ("Неизвестный статус: " <> t)
+{- | Фильтруем задачи по подстроке в Haskell (SQLite не поддерживает
+регистронезависимый LIKE легко через persistent).
+-}
+handleSearch ::
+  ConnectionPool ->
+  Maybe Text ->
+  Handler [TaskResponse]
+handleSearch pool Nothing = handleList pool
+handleSearch pool (Just query) = do
+  allItems <- runDB pool $ selectList [] [Asc TaskItemTitle]
+  let needle = T.toLower query
+      filtered = filter (\(Entity _ item) -> needle `T.isInfixOf` T.toLower (taskItemTitle item)) allItems
+  pure (map entityToResponse filtered)

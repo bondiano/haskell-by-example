@@ -2,6 +2,7 @@ module TaskTracker where
 
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Text (Text)
 
 data Priority = Low | Medium | High
   deriving (Show, Eq, Ord, Enum, Bounded)
@@ -10,7 +11,8 @@ data Status = Todo | InProgress | Done
   deriving (Show, Eq, Ord, Enum, Bounded)
 
 data Task = Task
-  { taskTitle :: String
+  { taskTitle :: Text
+  , taskDescription :: Text
   , taskPriority :: Priority
   , taskStatus :: Status
   }

@@ -3,6 +3,7 @@ module Solutions where
 import Control.Monad (foldM)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Text (Text)
 
 import TaskTracker
 
@@ -42,7 +43,7 @@ processCommands cfg cmds store0 = foldM (flip $ executeCmd cfg) store0 cmds
   executeCmd :: AppConfig -> Command -> TaskStore -> Either AppError TaskStore
   executeCmd config (AddCmd title) store =
     let tid = TaskId (Map.size (unTaskStore store) + 1)
-        task = Task title (defaultPriority config) Todo
+        task = Task title "" (defaultPriority config) Todo
      in Right (addTask tid task store)
   executeCmd _ (CompleteCmd tid) store =
     completeTask tid store
@@ -68,7 +69,7 @@ firstPlusSecond xs = do
 -- ============================================================
 
 -- | Проверяем название: не пустое и не длиннее 200.
-validateTask :: Task -> Either String Task
+validateTask :: Task -> Either Text Task
 validateTask task
   | null (taskTitle task) = Left "Пустое название"
   | length (taskTitle task) > 200 = Left "Название слишком длинное"

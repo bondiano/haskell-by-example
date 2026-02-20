@@ -1,20 +1,24 @@
 module MySolutions where
 
+import Data.Int (Int64)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
+import Database.Persist
+import Servant
 
+import API
 import TaskTracker
 
 -- ============================================================
--- Упражнение 1: Логика завершения задачи
+-- Упражнение 1: Логика завершения задачи (чистая функция)
 --
--- Если задача уже Done → Left "Задача уже выполнена"
--- Иначе → Right (задача с taskStatus = Done)
+-- Проверяет, можно ли завершить задачу (статус не "done").
+-- Возвращает Either с ошибкой или обновлённую задачу.
 -- ============================================================
 
-{- | Логика завершения задачи (чистая функция, без базы данных).
+{- | Логика завершения задачи (чистая функция).
 
 >>> handleCompleteLogic (Task "Тест" Low Todo)
 Right (Task {taskTitle = "Тест", taskPriority = Low, taskStatus = Done})
@@ -26,9 +30,9 @@ handleCompleteLogic :: Task -> Either Text Task
 handleCompleteLogic = undefined
 
 -- ============================================================
--- Упражнение 2: Статистика по статусам
+-- Упражнение 2: Статистика по статусам (чистая функция)
 --
--- Подсчитайте количество задач для каждого статуса.
+-- Подсчитывает количество задач для каждого статуса.
 -- Ключи: "todo", "in_progress", "done".
 -- ============================================================
 
@@ -41,12 +45,10 @@ computeStatsMap :: [Task] -> Map Text Int
 computeStatsMap = undefined
 
 -- ============================================================
--- Упражнение 3: Пагинация
+-- Упражнение 3: Пагинация (чистая функция)
 --
 -- paginate page perPage xs — взять perPage элементов со страницы page.
 -- Страницы нумеруются с 1.
--- paginate 1 20 xs = take 20 xs
--- paginate 2 20 xs = take 20 (drop 20 xs)
 -- ============================================================
 
 {- | Пагинация списка.
@@ -61,10 +63,9 @@ paginate :: Int -> Int -> [a] -> [a]
 paginate = undefined
 
 -- ============================================================
--- Упражнение 4: Поиск по названию
+-- Упражнение 4: Поиск по названию (чистая функция)
 --
 -- Регистронезависимый поиск по подстроке в taskTitle.
--- Подсказка: T.isInfixOf и T.toLower.
 -- ============================================================
 
 {- | Поиск задач по подстроке в названии.
@@ -76,11 +77,9 @@ searchByTitle :: Text -> [Task] -> [Task]
 searchByTitle = undefined
 
 -- ============================================================
--- Упражнение 5: Валидация приоритета
+-- Упражнение 5: Валидация приоритета (чистая функция)
 --
--- Проверить и нормализовать строку приоритета.
--- "HIGH" → Right "high", "Low" → Right "low"
--- Неизвестное → Left "Неизвестный приоритет: X"
+-- Проверяет и нормализует строку приоритета.
 -- ============================================================
 
 {- | Валидация и нормализация строки приоритета.
@@ -95,46 +94,57 @@ validatePriority :: Text -> Either Text Text
 validatePriority = undefined
 
 -- ============================================================
--- Упражнение 6: Конвертация Task в TaskResponse
+-- Упражнение 6: Конвертация Task → TaskResponse (чистая функция)
 --
--- Преобразуйте Task в TaskResponse, добавив id и
+-- Преобразует Task в TaskResponse, добавив id и
 -- конвертировав Priority/Status в текст.
 -- ============================================================
 
 {- | Создать TaskResponse из идентификатора и задачи.
 
->>> entityToResponse 1 (Task "Тест" Low Todo)
+>>> entityToResponsePure 1 (Task "Тест" Low Todo)
 TaskResponse {responseId = 1, responseTitle = "Тест", responsePriority = "low", responseStatus = "todo"}
 -}
-entityToResponse :: Int -> Task -> TaskResponse
-entityToResponse = undefined
+entityToResponsePure :: Int64 -> Task -> TaskResponse
+entityToResponsePure = undefined
 
 -- ============================================================
--- Упражнение 7: Конвертация Priority ↔ Text
+-- Упражнение 7: Обработчик пагинации с query-параметрами
 --
--- priorityToText: Low → "low", Medium → "medium", High → "high"
--- textToPriority: обратная операция, регистронезависимая
--- ============================================================
-
--- | Конвертация Priority в Text.
-priorityToText :: Priority -> Text
-priorityToText = undefined
-
--- | Конвертация Text в Priority (регистронезависимая).
-textToPriority :: Text -> Either Text Priority
-textToPriority = undefined
-
--- ============================================================
--- Упражнение 8: Конвертация Status ↔ Text
+-- Реализуйте handleListPaginated, который принимает Maybe Int
+-- для page и per_page, возвращает TaskResponse список.
 --
--- statusToText: Todo → "todo", InProgress → "in_progress", Done → "done"
--- textToStatus: обратная операция, регистронезависимая
+-- Используйте SelectOpt: LimitTo и OffsetBy.
 -- ============================================================
 
--- | Конвертация Status в Text.
-statusToText :: Status -> Text
-statusToText = undefined
+{- | Пагинированный список задач.
 
--- | Конвертация Text в Status (регистронезависимая).
-textToStatus :: Text -> Either Text Status
-textToStatus = undefined
+Если page = Nothing, использовать 1.
+Если per_page = Nothing, использовать 20.
+-}
+handleListPaginated ::
+  ConnectionPool ->
+  Maybe Int ->
+  Maybe Int ->
+  Handler [TaskResponse]
+handleListPaginated = undefined
+
+-- ============================================================
+-- Упражнение 8: Обработчик поиска по заголовку
+--
+-- Реализуйте handleSearch, который принимает Maybe Text
+-- для query параметра search и возвращает отфильтрованный список.
+--
+-- Для SQLite можно использовать фильтрацию в Haskell через filter.
+-- ============================================================
+
+{- | Поиск задач по заголовку.
+
+Если search = Nothing, вернуть все задачи.
+Иначе фильтровать по подстроке (регистронезависимо).
+-}
+handleSearch ::
+  ConnectionPool ->
+  Maybe Text ->
+  Handler [TaskResponse]
+handleSearch = undefined

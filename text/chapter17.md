@@ -1,20 +1,24 @@
 # Веб-приложение с базой данных
 
-Это кульминация нашего сквозного проекта. За предыдущие главы мы создали типы данных, бизнес-логику, модульную структуру и параллельный импорт. Теперь превратим трекер задач в полноценный REST API с базой данных. Глава охватывает веб-фреймворк **Scotty** (маршруты, параметры, JSON-ответы), **persistent** + **persistent-sqlite** (модели, миграции, CRUD-запросы), минимум **Template Haskell** для описания моделей, **ReaderT-паттерн** для передачи подключения к БД и обработку ошибок. Мы построим REST API с эндпоинтами `GET /tasks`, `POST /tasks`, `PUT /tasks/:id`, `DELETE /tasks/:id` и соберём полное приложение.
+Это кульминация нашего сквозного проекта. За предыдущие главы мы создали типы данных, бизнес-логику, модульную структуру и параллельный импорт. Теперь превратим трекер задач в полноценный REST API с базой данных. Глава охватывает веб-фреймворк **Servant** (типобезопасные API, автоматическая документация, генерация клиентов), **persistent** + **persistent-sqlite** (модели, миграции, CRUD-запросы), минимум **Template Haskell** для описания моделей, **ReaderT-паттерн** для передачи подключения к БД и обработку ошибок. Мы построим REST API с эндпоинтами `GET /tasks`, `POST /tasks`, `PUT /tasks/:id`, `DELETE /tasks/:id` и соберём полное приложение.
 
-К концу главы у вас будет работающий HTTP-сервер с базой данных — полноценный бэкенд для трекера задач.
+К концу главы у вас будет работающий HTTP-сервер с базой данных — полноценный бэкенд для трекера задач, где **типы гарантируют корректность API**.
 
-## Scotty — минималистичный веб-фреймворк
+## Servant — типобезопасный веб-фреймворк
 
-### Почему Scotty
+### Почему Servant
 
 В экосистеме Haskell есть несколько веб-фреймворков:
 
-- **Scotty** — минималистичный, вдохновлён Ruby's Sinatra. Идеален для обучения и небольших сервисов.
-- **Servant** — типобезопасный, API описывается на уровне типов. Мощный, но требует продвинутых знаний.
+- **Scotty** — минималистичный, вдохновлён Ruby's Sinatra. Прост, но не типобезопасен.
+- **Servant** — типобезопасный, API описывается на уровне типов. Мощный, автогенерация документации и клиентов.
 - **Yesod** — полнофункциональный фреймворк с шаблонами, ORM и роутингом.
 
-Мы используем Scotty — он прост и позволяет сосредоточиться на Haskell, а не на фреймворке.
+Мы используем **Servant** — он демонстрирует силу системы типов Haskell и является стандартом для современных API. API описывается как **тип**, и компилятор проверяет корректность обработчиков. Бонусы: автоматическая генерация документации (Swagger/OpenAPI), клиентских библиотек и mock-серверов.
+
+```admonish tip title="Философия Servant"
+В других фреймворках API — это набор строк-маршрутов, проверяемых в runtime. В Servant API — это **тип**, и компилятор гарантирует, что обработчики соответствуют описанию. Это типичный для Haskell подход: **«Если компилируется — вероятно, работает»**.
+```
 
 ### Подключение
 
@@ -23,149 +27,193 @@
 ```yaml
 dependencies:
   - base >= 4.7 && < 5
-  - scotty
-  - aeson        # JSON
+  - servant
+  - servant-server
+  - warp           # HTTP-сервер
+  - aeson          # JSON
   - text
-  - wai          # Web Application Interface
-  - http-types   # HTTP status codes
 ```
 
 ### Первое приложение
 
 ```haskell
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeOperators #-}
 
-import Web.Scotty
-import Data.Text.Lazy (Text)
+import Servant
+import Network.Wai.Handler.Warp (run)
+import Data.Text (Text)
+
+-- Определение API как типа
+type API = "hello" :> Capture "name" Text :> Get '[JSON] Text
+
+-- Обработчик
+server :: Server API
+server = helloHandler
+ where
+  helloHandler :: Text -> Handler Text
+  helloHandler name = pure ("Привет, " <> name <> "!")
+
+-- Приложение
+app :: Application
+app = serve (Proxy :: Proxy API) server
 
 main :: IO ()
-main = scotty 3000 $ do
-  get "/" $ do
-    text "Трекер задач v1.0"
-
-  get "/hello/:name" $ do
-    name <- pathParam "name" :: ActionM Text
-    text ("Привет, " <> name <> "!")
+main = do
+  putStrLn "Сервер запущен на http://localhost:3000"
+  run 3000 app
 ```
 
 ```text
-$ stack run
-$ curl http://localhost:3000/
-Трекер задач v1.0
-
+$ stack run &
 $ curl http://localhost:3000/hello/Haskell
-Привет, Haskell!
+"Привет, Haskell!"
 ```
 
 Разберём:
 
-- `scotty 3000` — запускает HTTP-сервер на порту 3000.
-- `get "/" $ do ...` — обработчик GET-запроса на корневой путь.
-- `pathParam "name"` — извлекает параметр из URL (`:name` в маршруте).
-- `text` — отправляет текстовый ответ.
+- `type API = ...` — **описание API как типа**. Компилятор проверяет, что обработчик соответствует этому типу.
+- `:>` — комбинатор «затем». `"hello" :> Capture "name" Text` означает: путь `/hello/:name`.
+- `Capture "name" Text` — извлекает параметр из URL и конвертирует в `Text`.
+- `Get '[JSON] Text` — GET-запрос, возвращает `Text` в формате JSON.
+- `Server API` — тип обработчика, автоматически выводится из `API`. Для нашего API это `Text -> Handler Text`.
+- `serve (Proxy :: Proxy API) server` — связывает описание API и обработчик, создаёт WAI `Application`.
 
 ```admonish tip title="Знакомый аналог"
-**TypeScript (Express):**
-`app.get('/hello/:name', (req, res) => { res.send('Hello, ' + req.params.name) })`.
-**Python (Flask):**
-`@app.route('/hello/<name>') def hello(name): return f'Hello, {name}!'`.
-**Go (net/http + gorilla/mux):**
-`r.HandleFunc("/hello/{name}", handler)`.
-Scotty практически идентичен Sinatra/Flask/Express по API.
+**TypeScript (tRPC):** API описывается через типы, автогенерация клиента.
+**Python (FastAPI):** Аннотации типов для автодокументации.
+**Go (go-swagger):** Генерация кода из OpenAPI-спецификации.
+Servant идёт дальше — API **является** типом, а не описывается через аннотации или spec-файлы.
 ```
 
-### Маршруты и методы
+### Комбинаторы маршрутов
 
-Scotty поддерживает все стандартные HTTP-методы:
+Servant использует **type-level DSL** для описания маршрутов:
 
 ```haskell
-import Web.Scotty
-import Network.HTTP.Types.Status (status201, status204, status404)
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeOperators #-}
 
-routes :: ScottyM ()
-routes = do
-  get    "/tasks"     listTasks
-  get    "/tasks/:id" getTask
-  post   "/tasks"     createTask
-  put    "/tasks/:id" updateTask
-  delete "/tasks/:id" deleteTask
+import Servant
+
+-- Один эндпоинт
+type GetUser = "users" :> Capture "id" Int :> Get '[JSON] User
+
+-- Несколько эндпоинтов (:<|> — OR)
+type UsersAPI =
+       "users" :> Get '[JSON] [User]
+  :<|> "users" :> Capture "id" Int :> Get '[JSON] User
+  :<|> "users" :> ReqBody '[JSON] User :> Post '[JSON] User
+
+-- Префикс для всех маршрутов
+type API = "api" :> "v1" :> UsersAPI
 ```
 
-Функции `listTasks`, `getTask`, `createTask`, `updateTask`, `deleteTask` — это *обработчики*, которые реализуются отдельно. Scotty связывает HTTP-метод + путь с обработчиком и вызывает нужный при каждом входящем запросе.
+Операторы:
+- `:>` — «затем» (chain)
+- `:<|>` — «или» (альтернатива, несколько эндпоинтов)
+- `Capture "name" Type` — параметр из URL
+- `ReqBody '[JSON] Type` — тело запроса (JSON)
+- `Get/Post/Put/Delete '[JSON] Type` — HTTP-метод + формат ответа
 
-### Параметры и тело запроса
+### Обработчики
+
+Тип обработчика выводится из типа API:
 
 ```haskell
--- Параметр из URL:  /tasks/:id
-getTaskId :: ActionM Int
-getTaskId = pathParam "id"
+-- Один эндпоинт
+type API1 = "users" :> Capture "id" Int :> Get '[JSON] User
 
--- Query-параметр:  /tasks?status=done
-getStatusFilter :: ActionM (Maybe Text)
-getStatusFilter = queryParamMaybe "status"
+server1 :: Server API1
+server1 = getUser
+ where
+  getUser :: Int -> Handler User
+  getUser userId = ...
 
--- Тело запроса как JSON
-getTaskBody :: ActionM TaskRequest
-getTaskBody = jsonData
+-- Несколько эндпоинтов
+type API2 =
+       "users" :> Get '[JSON] [User]
+  :<|> "users" :> Capture "id" Int :> Get '[JSON] User
+
+server2 :: Server API2
+server2 = listUsers :<|> getUser
+ where
+  listUsers :: Handler [User]
+  listUsers = ...
+
+  getUser :: Int -> Handler User
+  getUser userId = ...
 ```
 
-Scotty автоматически парсит параметры: `pathParam` извлекает именованный сегмент URL и конвертирует его в нужный тип, `queryParamMaybe` возвращает `Nothing`, если query-параметр отсутствует, а `jsonData` десериализует тело запроса через инстанс `FromJSON`.
+`Server API` автоматически выводится:
+- Один эндпоинт → одна функция
+- `:<|>` → `:<|>` между обработчиками
+- `Capture` → дополнительный аргумент функции
+- `ReqBody` → дополнительный аргумент функции
 
-### JSON-ответы
+### Монада Handler
 
-Scotty работает с **aeson** для сериализации/десериализации JSON:
+Все обработчики работают в монаде `Handler`:
 
 ```haskell
-{-# LANGUAGE DeriveGeneric #-}
+newtype Handler a = ...  -- упрощённо: ExceptT ServerError IO a
+```
 
-import Data.Aeson (ToJSON, FromJSON)
-import GHC.Generics (Generic)
+`Handler` — это `IO` с возможностью бросить HTTP-ошибку:
 
-data TaskResponse = TaskResponse
-  { trId       :: Int
-  , trTitle    :: Text
-  , trPriority :: Text
-  , trStatus   :: Text
-  } deriving (Show, Generic)
+```haskell
+import Servant
 
-instance ToJSON TaskResponse
-instance FromJSON TaskResponse
+-- Успешный ответ
+getUser :: Int -> Handler User
+getUser userId = pure (User userId "Alice")
+
+-- Ошибка 404
+getUser :: Int -> Handler User
+getUser userId = throwError err404 { errBody = "User not found" }
+
+-- IO-действия
+getUserFromDB :: Int -> Handler User
+getUserFromDB userId = do
+  mUser <- liftIO $ queryDatabase userId
+  case mUser of
+    Nothing -> throwError err404
+    Just u  -> pure u
+```
+
+Предопределённые ошибки: `err400`, `err401`, `err403`, `err404`, `err500`.
+
+### Автоматическая документация
+
+Servant может сгенерировать OpenAPI/Swagger документацию:
+
+```yaml
+# package.yaml
+dependencies:
+  - servant-swagger
+  - swagger2
 ```
 
 ```haskell
-listTasks :: ActionM ()
-listTasks = do
-  let tasks = [ TaskResponse 1 "Купить молоко" "low" "todo"
-              , TaskResponse 2 "Написать отчёт" "high" "in_progress"
-              ]
-  json tasks
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE DataKinds #-}
+
+import Servant
+import Servant.Swagger
+import Data.Swagger
+
+type API = "users" :> Get '[JSON] [User]
+      :<|> "users" :> Capture "id" Int :> Get '[JSON] User
+
+swagger :: Swagger
+swagger = toSwagger (Proxy :: Proxy API)
+
+main :: IO ()
+main = do
+  print swagger  -- Полная спецификация OpenAPI
 ```
 
-```text
-$ curl http://localhost:3000/tasks
-[{"trId":1,"trTitle":"Купить молоко","trPriority":"low","trStatus":"todo"},
- {"trId":2,"trTitle":"Написать отчёт","trPriority":"high","trStatus":"in_progress"}]
-```
-
-### HTTP-статусы
-
-```haskell
-import Network.HTTP.Types.Status
-
-createTask :: ActionM ()
-createTask = do
-  taskReq <- jsonData :: ActionM TaskRequest
-  -- ... создание задачи ...
-  status status201
-  json (TaskResponse 3 (trqTitle taskReq) (trqPriority taskReq) "todo")
-
-notFoundHandler :: ActionM ()
-notFoundHandler = do
-  status status404
-  json (ErrorResponse "Ресурс не найден")
-```
-
-Функция `status` устанавливает HTTP-статус ответа. По умолчанию Scotty возвращает 200 OK; для созданного ресурса правильный код — 201 Created, для отсутствующего — 404 Not Found. Обработчик ошибок лучше выносить отдельно, чтобы не дублировать логику формирования ответа.
+Servant **генерирует** документацию из типа API. Не нужно писать YAML вручную — если API компилируется, документация корректна.
 
 ## persistent — ORM для Haskell
 
@@ -202,7 +250,7 @@ persistent использует **Template Haskell** для генерации �
 {-# LANGUAGE DerivingStrategies       #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StandaloneDeriving       #-}
-{-# LANGUAGE UndeclarededFields       #-}
+{-# LANGUAGE UndecidableInstances       #-}
 {-# LANGUAGE DataKinds                #-}
 {-# LANGUAGE FlexibleInstances        #-}
 {-# LANGUAGE MultiParamTypeClasses    #-}
@@ -349,11 +397,56 @@ activeOrUrgent = selectList
 
 Операторы фильтрации: `==.`, `!=.`, `>.`, `>=.`, `<.`, `<=.`, `||.` (OR).
 
+### Типобезопасность в БД: PersistField
+
+По умолчанию persistent хранит ADT как `Text`. Но можно сделать лучше — определить `PersistField` instances для типобезопасного хранения:
+
+```haskell
+import Database.Persist (PersistField (..), PersistValue (..))
+import Database.Persist.Sql (PersistFieldSql (..), SqlType (..))
+
+instance PersistField Priority where
+  toPersistValue Low = PersistText "low"
+  toPersistValue Medium = PersistText "medium"
+  toPersistValue High = PersistText "high"
+
+  fromPersistValue (PersistText "low") = Right Low
+  fromPersistValue (PersistText "medium") = Right Medium
+  fromPersistValue (PersistText "high") = Right High
+  fromPersistValue (PersistText x) =
+    Left $ "Неизвестный приоритет: " <> x
+  fromPersistValue x =
+    Left $ "Ожидался Text, получено: " <> T.pack (show x)
+
+instance PersistFieldSql Priority where
+  sqlType _ = SqlString
+```
+
+Теперь в схеме можно использовать `Priority` напрямую:
+
+```haskell
+TaskItem
+  title       Text
+  description Text default=''
+  priority    Priority default='Medium'  -- ADT, не Text!
+  status      Status default='Todo'
+```
+
+**Преимущества:**
+
+1. **Невозможно** записать `"invalid_priority"` — компилятор запретит
+2. Queries типобезопасны: `[TaskItemStatus ==. Done]` вместо `[TaskItemStatus ==. "done"]`
+3. Refactoring-friendly — переименование конструктора автоматически исправит все uses
+
+```admonish tip title="Best practice"
+Для production-кода ВСЕГДА определяйте `PersistField` instances для ADT. Это предотвращает ошибки времени выполнения и делает код более надёжным.
+```
+
 ## ReaderT-паттерн для подключения к БД
 
 ### Проблема
 
-Каждый обработчик Scotty должен иметь доступ к подключению к БД. Передавать его через аргументы каждой функции утомительно. **ReaderT-паттерн** решает эту проблему.
+Каждый обработчик Servant должен иметь доступ к подключению к БД. Передавать его через аргументы каждой функции утомительно. **ReaderT-паттерн** решает эту проблему.
 
 ### Пул соединений
 
@@ -377,35 +470,26 @@ createPool = runStdoutLoggingT $
 ```haskell
 data AppConfig = AppConfig
   { appPool :: ConnectionPool
-  , appPort :: Int
   }
 ```
 
-Конфигурацию удобно хранить в одной записи. В более крупных приложениях её передают через `ReaderT AppConfig IO`, чтобы обработчики получали настройки без явных аргументов — мы делаем упрощённый вариант и передаём `ConnectionPool` напрямую.
+Конфигурацию удобно хранить в одной записи. В более крупных приложениях её передают через `ReaderT AppConfig IO`, чтобы обработчики получали настройки без явных аргументов.
 
 ### Запуск запросов через пул
 
 ```haskell
-runDB :: ConnectionPool -> SqlPersistT IO a -> IO a
-runDB = flip runSqlPool
+runDB :: ConnectionPool -> SqlPersistT IO a -> Handler a
+runDB pool query = liftIO $ runSqlPool query pool
 ```
 
-В обработчиках Scotty:
+В обработчиках Servant:
 
 ```haskell
-listTasksHandler :: ConnectionPool -> ActionM ()
-listTasksHandler pool = do
-  tasks <- liftIO $ runDB pool getAllTasks
-  json (map entityToResponse tasks)
+listTasksHandler :: ConnectionPool -> Handler [Entity Task]
+listTasksHandler pool = runDB pool getAllTasks
 ```
 
-`liftIO` поднимает `IO`-действие в монаду `ActionM` (монада обработчика Scotty).
-
-```admonish note title="Зачем liftIO"
-Scotty-обработчики работают в монаде `ActionM`, а не в `IO`. `liftIO :: IO a -> ActionM a` позволяет выполнить IO-действие внутри обработчика. Это частный случай `MonadIO` — класса типов, который мы встретили в [главе 13](chapter13.md) (трансформеры).
-```
-
-## REST API для трекера задач
+## Servant API для трекера задач
 
 ### Модели запросов и ответов
 
@@ -426,9 +510,9 @@ data CreateTaskRequest = CreateTaskRequest
 
 instance FromJSON CreateTaskRequest where
   parseJSON = withObject "CreateTaskRequest" $ \v -> CreateTaskRequest
-    <$> v .: "title"
-    <*> v .: "description"
-    <*> v .:? "priority" .!= "medium"
+    <$> v .:  "title"
+    <*> v .:? "description" .!= ""
+    <*> v .:? "priority"    .!= "medium"
 
 -- Запрос на обновление задачи
 data UpdateTaskRequest = UpdateTaskRequest
@@ -474,6 +558,24 @@ instance ToJSON ErrorResponse where
 
 Оператор `.:?` парсит необязательное поле (возвращает `Maybe`), а `.!=` задаёт значение по умолчанию.
 
+### Определение API
+
+```haskell
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeOperators #-}
+
+import Servant
+
+type TaskAPI =
+       "tasks" :> Get '[JSON] [TaskResponse]
+  :<|> "tasks" :> Capture "id" Int64 :> Get '[JSON] TaskResponse
+  :<|> "tasks" :> ReqBody '[JSON] CreateTaskRequest :> Post '[JSON] TaskResponse
+  :<|> "tasks" :> Capture "id" Int64 :> ReqBody '[JSON] UpdateTaskRequest :> Put '[JSON] TaskResponse
+  :<|> "tasks" :> Capture "id" Int64 :> DeleteNoContent
+```
+
+`DeleteNoContent` — специальный тип для DELETE с ответом 204 (без тела).
+
 ### Конвертация между моделями
 
 ```haskell
@@ -502,80 +604,64 @@ requestToTask CreateTaskRequest{..} = Task
 ### Обработчики
 
 ```haskell
-import Web.Scotty
-import Network.HTTP.Types.Status
+import Servant
 import Database.Persist
 import Database.Persist.Sqlite (fromSqlKey, toSqlKey)
 import Data.Int (Int64)
-import Control.Monad.IO.Class (liftIO)
 
 -- GET /tasks — список всех задач
-listTasksHandler :: ConnectionPool -> ActionM ()
+listTasksHandler :: ConnectionPool -> Handler [TaskResponse]
 listTasksHandler pool = do
-  statusFilter <- queryParamMaybe "status" :: ActionM (Maybe Text)
-  tasks <- liftIO $ runDB pool $ case statusFilter of
-    Nothing -> selectList [] [Asc TaskTitle]
-    Just s  -> selectList [TaskStatus ==. s] [Asc TaskTitle]
-  json (map entityToResponse tasks)
+  tasks <- runDB pool $ selectList [] [Asc TaskTitle]
+  pure (map entityToResponse tasks)
 
 -- GET /tasks/:id — одна задача
-getTaskHandler :: ConnectionPool -> ActionM ()
-getTaskHandler pool = do
-  taskId <- pathParam "id" :: ActionM Int64
-  mTask <- liftIO $ runDB pool $ get (toSqlKey taskId :: TaskId)
+getTaskHandler :: ConnectionPool -> Int64 -> Handler TaskResponse
+getTaskHandler pool taskId = do
+  let key = toSqlKey taskId :: TaskId
+  mTask <- runDB pool $ get key
   case mTask of
-    Nothing   -> do
-      status status404
-      json (ErrorResponse "Задача не найдена")
-    Just task -> json (entityToResponse (Entity (toSqlKey taskId) task))
+    Nothing   -> throwError err404 { errBody = "Задача не найдена" }
+    Just task -> pure (entityToResponse (Entity key task))
 
 -- POST /tasks — создать задачу
-createTaskHandler :: ConnectionPool -> ActionM ()
-createTaskHandler pool = do
-  req <- jsonData :: ActionM CreateTaskRequest
-  let task = requestToTask req
-  newId <- liftIO $ runDB pool $ insert task
-  status status201
-  json (entityToResponse (Entity newId task))
+createTaskHandler :: ConnectionPool -> CreateTaskRequest -> Handler TaskResponse
+createTaskHandler pool req = do
+  case validateCreate req of
+    Left err -> throwError err400 { errBody = encodeUtf8 err }
+    Right validReq -> do
+      let task = requestToTask validReq
+      newId <- runDB pool $ insert task
+      pure (entityToResponse (Entity newId task))
 
 -- PUT /tasks/:id — обновить задачу
-updateTaskHandler :: ConnectionPool -> ActionM ()
-updateTaskHandler pool = do
-  taskId <- pathParam "id" :: ActionM Int64
-  req <- jsonData :: ActionM UpdateTaskRequest
+updateTaskHandler :: ConnectionPool -> Int64 -> UpdateTaskRequest -> Handler TaskResponse
+updateTaskHandler pool taskId req = do
   let key = toSqlKey taskId :: TaskId
-  mTask <- liftIO $ runDB pool $ get key
+  mTask <- runDB pool $ get key
   case mTask of
-    Nothing -> do
-      status status404
-      json (ErrorResponse "Задача не найдена")
-    Just _task -> do
+    Nothing -> throwError err404 { errBody = "Задача не найдена" }
+    Just _ -> do
       let updates = buildUpdates req
-      liftIO $ runDB pool $ update key updates
-      updated <- liftIO $ runDB pool $ get key
+      runDB pool $ update key updates
+      updated <- runDB pool $ get key
       case updated of
-        Nothing   -> do
-          status status404
-          json (ErrorResponse "Задача не найдена")
-        Just task -> json (entityToResponse (Entity key task))
+        Nothing   -> throwError err404 { errBody = "Задача не найдена" }
+        Just task -> pure (entityToResponse (Entity key task))
 
 -- DELETE /tasks/:id — удалить задачу
-deleteTaskHandler :: ConnectionPool -> ActionM ()
-deleteTaskHandler pool = do
-  taskId <- pathParam "id" :: ActionM Int64
+deleteTaskHandler :: ConnectionPool -> Int64 -> Handler NoContent
+deleteTaskHandler pool taskId = do
   let key = toSqlKey taskId :: TaskId
-  mTask <- liftIO $ runDB pool $ get key
+  mTask <- runDB pool $ get key
   case mTask of
-    Nothing -> do
-      status status404
-      json (ErrorResponse "Задача не найдена")
+    Nothing -> throwError err404 { errBody = "Задача не найдена" }
     Just _ -> do
-      liftIO $ runDB pool $ delete key
-      status status204
-      raw ""
+      runDB pool $ delete key
+      pure NoContent
 ```
 
-Все пять обработчиков следуют одному паттерну: извлечь параметры из запроса, обратиться к БД через `liftIO . runDB`, проверить результат через `case` и вернуть ответ с правильным HTTP-статусом. При 404 возвращается JSON-объект с полем `"error"`, а не пустое тело.
+Все пять обработчиков следуют одному паттерну: извлечь параметры, обратиться к БД через `runDB`, проверить результат через `case` и вернуть ответ или бросить ошибку через `throwError`.
 
 ### Построение списка обновлений
 
@@ -593,36 +679,6 @@ buildUpdates UpdateTaskRequest{..} = catMaybes
 
 Функция `catMaybes` отфильтровывает `Nothing`, оставляя только заданные поля. Если клиент передал `{"title": "Новый заголовок"}` — обновится только `title`.
 
-## Обработка ошибок
-
-### Проблема с jsonData
-
-Если клиент отправит невалидный JSON, `jsonData` бросит исключение, и Scotty вернёт ответ с кодом 500 и стандартным сообщением. Это не информативно.
-
-### defaultHandler и rescue
-
-Scotty позволяет перехватывать ошибки:
-
-```haskell
-import Web.Scotty (defaultHandler, ActionM, ScottyM)
-import Web.Scotty.Trans (ActionError(..))
-import Data.Text.Lazy qualified as LT
-
-app :: ConnectionPool -> ScottyM ()
-app pool = do
-  -- Обработчик ошибок по умолчанию
-  defaultHandler $ \err -> do
-    status status400
-    json (ErrorResponse (LT.toStrict (LT.pack (show err))))
-
-  -- Маршруты
-  get    "/tasks"     (listTasksHandler pool)
-  get    "/tasks/:id" (getTaskHandler pool)
-  post   "/tasks"     (createTaskHandler pool)
-  put    "/tasks/:id" (updateTaskHandler pool)
-  delete "/tasks/:id" (deleteTaskHandler pool)
-```
-
 ### Валидация
 
 Добавим проверку данных перед созданием задачи:
@@ -630,39 +686,48 @@ app pool = do
 ```haskell
 import Data.Text qualified as Text
 
-validateCreateRequest :: CreateTaskRequest -> Either Text CreateTaskRequest
-validateCreateRequest req
+validateCreate :: CreateTaskRequest -> Either Text CreateTaskRequest
+validateCreate req
   | Text.null (ctrTitle req) =
       Left "Заголовок не может быть пустым"
   | ctrPriority req `notElem` ["low", "medium", "high"] =
-      Left "Приоритет должен быть: low, medium, high"
+      Left "Приоритет: low, medium, high"
   | otherwise =
       Right req
-
-createTaskHandler :: ConnectionPool -> ActionM ()
-createTaskHandler pool = do
-  req <- jsonData :: ActionM CreateTaskRequest
-  case validateCreateRequest req of
-    Left err -> do
-      status status400
-      json (ErrorResponse err)
-    Right validReq -> do
-      let task = requestToTask validReq
-      newId <- liftIO $ runDB pool $ insert task
-      status status201
-      json (entityToResponse (Entity newId task))
 ```
 
-```admonish warning title="Валидация на уровне типов"
-В нашем примере приоритет и статус хранятся как `Text` — это упрощение для учебных целей. В продакшн-коде стоит использовать собственные типы (`Priority`, `Status`) с инстансами `PersistField`. Тогда невалидные значения будут невозможны на уровне типов.
+### Сборка сервера
+
+```haskell
+-- Сервер с доступом к пулу
+taskServer :: ConnectionPool -> Server TaskAPI
+taskServer pool =
+       listTasksHandler pool
+  :<|> getTaskHandler pool
+  :<|> createTaskHandler pool
+  :<|> updateTaskHandler pool
+  :<|> deleteTaskHandler pool
+
+-- WAI Application
+app :: ConnectionPool -> Application
+app pool = serve (Proxy :: Proxy TaskAPI) (taskServer pool)
+
+-- Точка входа
+main :: IO ()
+main = do
+  pool <- runStdoutLoggingT $ createSqlitePool "tasks.db" 5
+  runStdoutLoggingT $ runSqlPool (runMigration migrateAll) pool
+  putStrLn "Сервер запущен на http://localhost:3000"
+  run 3000 (app pool)
 ```
 
 ## Полный пример
 
-Соберём всё вместе в одном файле для наглядности:
+Соберём всё вместе:
 
 ```haskell
 {-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GADTs                      #-}
@@ -670,12 +735,12 @@ createTaskHandler pool = do
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE QuasiQuotes                #-}
+{-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE UndecidableInstances       #-}
-{-# LANGUAGE DeriveGeneric              #-}
-{-# LANGUAGE RecordWildCards            #-}
 
 module Main where
 
@@ -687,12 +752,14 @@ import Data.Maybe (catMaybes)
 import Data.Pool (Pool)
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Text.Encoding (encodeUtf8)
 import Database.Persist
 import Database.Persist.Sqlite
 import Database.Persist.TH
 import GHC.Generics (Generic)
-import Network.HTTP.Types.Status
-import Web.Scotty
+import Network.Wai (Application)
+import Network.Wai.Handler.Warp (run)
+import Servant
 
 -- ── Модели persistent ──────────────────────────────────────
 
@@ -750,11 +817,14 @@ instance ToJSON TaskResponse where
     , "status"      .= trStatus
     ]
 
-newtype ErrorResponse = ErrorResponse { errMessage :: Text }
-  deriving (Show, Generic)
+-- ── Определение API ────────────────────────────────────────
 
-instance ToJSON ErrorResponse where
-  toJSON (ErrorResponse msg) = object ["error" .= msg]
+type TaskAPI =
+       "tasks" :> Get '[JSON] [TaskResponse]
+  :<|> "tasks" :> Capture "id" Int64 :> Get '[JSON] TaskResponse
+  :<|> "tasks" :> ReqBody '[JSON] CreateTaskRequest :> Post '[JSON] TaskResponse
+  :<|> "tasks" :> Capture "id" Int64 :> ReqBody '[JSON] UpdateTaskRequest :> Put '[JSON] TaskResponse
+  :<|> "tasks" :> Capture "id" Int64 :> DeleteNoContent
 
 -- ── Конвертация ────────────────────────────────────────────
 
@@ -780,8 +850,8 @@ requestToTaskItem CreateTaskRequest{..} = TaskItem
 type DB a = SqlPersistT IO a
 type ConnectionPool = Pool SqlBackend
 
-runDB :: ConnectionPool -> DB a -> IO a
-runDB = flip runSqlPool
+runDB :: ConnectionPool -> DB a -> Handler a
+runDB pool query = liftIO $ runSqlPool query pool
 
 buildUpdates :: UpdateTaskRequest -> [Update TaskItem]
 buildUpdates UpdateTaskRequest{..} = catMaybes
@@ -802,70 +872,63 @@ validateCreate req
 
 -- ── Обработчики ────────────────────────────────────────────
 
-handleList :: ConnectionPool -> ActionM ()
+handleList :: ConnectionPool -> Handler [TaskResponse]
 handleList pool = do
-  statusFilter <- queryParamMaybe "status" :: ActionM (Maybe Text)
-  items <- liftIO $ runDB pool $ case statusFilter of
-    Nothing -> selectList [] [Asc TaskItemTitle]
-    Just s  -> selectList [TaskItemStatus ==. s] [Asc TaskItemTitle]
-  json (map entityToResponse items)
+  items <- runDB pool $ selectList [] [Asc TaskItemTitle]
+  pure (map entityToResponse items)
 
-handleGet :: ConnectionPool -> ActionM ()
-handleGet pool = do
-  tid <- pathParam "id" :: ActionM Int64
+handleGet :: ConnectionPool -> Int64 -> Handler TaskResponse
+handleGet pool tid = do
   let key = toSqlKey tid :: TaskItemId
-  mItem <- liftIO $ runDB pool $ get key
+  mItem <- runDB pool $ get key
   case mItem of
-    Nothing   -> status status404 >> json (ErrorResponse "Не найдена")
-    Just item -> json (entityToResponse (Entity key item))
+    Nothing   -> throwError err404 { errBody = "Задача не найдена" }
+    Just item -> pure (entityToResponse (Entity key item))
 
-handleCreate :: ConnectionPool -> ActionM ()
-handleCreate pool = do
-  req <- jsonData :: ActionM CreateTaskRequest
+handleCreate :: ConnectionPool -> CreateTaskRequest -> Handler TaskResponse
+handleCreate pool req = do
   case validateCreate req of
-    Left err -> status status400 >> json (ErrorResponse err)
+    Left err -> throwError err400 { errBody = encodeUtf8 err }
     Right validReq -> do
       let item = requestToTaskItem validReq
-      newId <- liftIO $ runDB pool $ insert item
-      status status201
-      json (entityToResponse (Entity newId item))
+      newId <- runDB pool $ insert item
+      pure (entityToResponse (Entity newId item))
 
-handleUpdate :: ConnectionPool -> ActionM ()
-handleUpdate pool = do
-  tid <- pathParam "id" :: ActionM Int64
-  req <- jsonData :: ActionM UpdateTaskRequest
+handleUpdate :: ConnectionPool -> Int64 -> UpdateTaskRequest -> Handler TaskResponse
+handleUpdate pool tid req = do
   let key = toSqlKey tid :: TaskItemId
-  mItem <- liftIO $ runDB pool $ get key
+  mItem <- runDB pool $ get key
   case mItem of
-    Nothing -> status status404 >> json (ErrorResponse "Не найдена")
+    Nothing -> throwError err404 { errBody = "Задача не найдена" }
     Just _ -> do
-      liftIO $ runDB pool $ update key (buildUpdates req)
-      mUpdated <- liftIO $ runDB pool $ get key
+      runDB pool $ update key (buildUpdates req)
+      mUpdated <- runDB pool $ get key
       case mUpdated of
-        Nothing   -> status status404 >> json (ErrorResponse "Не найдена")
-        Just item -> json (entityToResponse (Entity key item))
+        Nothing   -> throwError err404 { errBody = "Задача не найдена" }
+        Just item -> pure (entityToResponse (Entity key item))
 
-handleDelete :: ConnectionPool -> ActionM ()
-handleDelete pool = do
-  tid <- pathParam "id" :: ActionM Int64
+handleDelete :: ConnectionPool -> Int64 -> Handler NoContent
+handleDelete pool tid = do
   let key = toSqlKey tid :: TaskItemId
-  mItem <- liftIO $ runDB pool $ get key
+  mItem <- runDB pool $ get key
   case mItem of
-    Nothing -> status status404 >> json (ErrorResponse "Не найдена")
+    Nothing -> throwError err404 { errBody = "Задача не найдена" }
     Just _  -> do
-      liftIO $ runDB pool $ Database.Persist.delete key
-      status status204
-      raw ""
+      runDB pool $ Database.Persist.delete key
+      pure NoContent
 
 -- ── Приложение ─────────────────────────────────────────────
 
-application :: ConnectionPool -> ScottyM ()
-application pool = do
-  get    "/tasks"     (handleList pool)
-  get    "/tasks/:id" (handleGet pool)
-  post   "/tasks"     (handleCreate pool)
-  put    "/tasks/:id" (handleUpdate pool)
-  delete "/tasks/:id" (handleDelete pool)
+taskServer :: ConnectionPool -> Server TaskAPI
+taskServer pool =
+       handleList pool
+  :<|> handleGet pool
+  :<|> handleCreate pool
+  :<|> handleUpdate pool
+  :<|> handleDelete pool
+
+application :: ConnectionPool -> Application
+application pool = serve (Proxy :: Proxy TaskAPI) (taskServer pool)
 
 -- ── Точка входа ────────────────────────────────────────────
 
@@ -874,10 +937,10 @@ main = do
   pool <- runStdoutLoggingT $ createSqlitePool "tasks.db" 5
   runStdoutLoggingT $ runSqlPool (runMigration migrateAll) pool
   putStrLn "Сервер запущен на http://localhost:3000"
-  scotty 3000 (application pool)
+  run 3000 (application pool)
 ```
 
-Вот что делает каждая секция: `share [mkPersist, mkMigrate]` через Template Haskell генерирует типы и функции для работы с БД; секции JSON-типов и конвертации изолируют HTTP-слой от слоя хранилища; обработчики делегируют работу в `runDB`; `main` инициализирует пул, запускает авто-миграцию и запускает Scotty-сервер.
+Вот что делает каждая секция: `share [mkPersist, mkMigrate]` через Template Haskell генерирует типы и функции для работы с БД; секции JSON-типов и конвертации изолируют HTTP-слой от слоя хранилища; **тип API описывает контракт**, обработчики реализуют логику, `taskServer` связывает их через `:<|>`; `main` инициализирует пул, запускает авто-миграцию и запускает Warp-сервер.
 
 ### Тестирование API
 
@@ -906,14 +969,74 @@ $ curl -X PUT http://localhost:3000/tasks/1 \
 
 {"id":1,"title":"Купить молоко","description":"","priority":"low","status":"done"}
 
-$ curl http://localhost:3000/tasks?status=todo
+$ curl -X DELETE http://localhost:3000/tasks/1 -i
 
-[{"id":2,"title":"Написать отчёт",...}]
-
-$ curl -X DELETE http://localhost:3000/tasks/1 -w "%{http_code}"
-
-204
+HTTP/1.1 204 No Content
 ```
+
+## Преимущества Servant
+
+### Типобезопасность
+
+Если обработчик не соответствует API — код не компилируется:
+
+```haskell
+type API = "users" :> Capture "id" Int :> Get '[JSON] User
+
+-- ✗ ОШИБКА КОМПИЛЯЦИИ
+server :: Server API
+server = getUser
+ where
+  getUser :: Text -> Handler User  -- Тип не совпадает! Ожидается Int
+  getUser = ...
+```
+
+Компилятор не даст вам перепутать типы параметров или забыть обработчик.
+
+### Автогенерация клиентов
+
+Из типа API можно сгенерировать клиентскую библиотеку:
+
+```haskell
+import Servant.Client
+
+type API = "tasks" :> Get '[JSON] [TaskResponse]
+      :<|> "tasks" :> Capture "id" Int64 :> Get '[JSON] TaskResponse
+
+getTasks :: ClientM [TaskResponse]
+getTask  :: Int64 -> ClientM TaskResponse
+
+getTasks :<|> getTask = client (Proxy :: Proxy API)
+
+-- Использование
+main :: IO ()
+main = do
+  manager <- newManager defaultManagerSettings
+  let baseUrl = BaseUrl Http "localhost" 3000 ""
+  result <- runClientM getTasks (mkClientEnv manager baseUrl)
+  print result
+```
+
+Клиент **выведен из типа API**. Если API изменится — клиент обновится автоматически. Нет рассинхронизации между сервером и клиентом.
+
+### Автогенерация документации
+
+```haskell
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE DataKinds #-}
+
+import Servant
+import Servant.Swagger
+import Data.Swagger
+
+type TaskAPI = "tasks" :> Get '[JSON] [TaskResponse]
+          :<|> "tasks" :> Capture "id" Int64 :> Get '[JSON] TaskResponse
+
+swagger :: Swagger
+swagger = toSwagger (Proxy :: Proxy TaskAPI)
+```
+
+Servant генерирует OpenAPI/Swagger-спецификацию. Её можно отдать клиентам или использовать в Swagger UI для интерактивной документации.
 
 ## Упражнения
 
@@ -921,13 +1044,17 @@ $ curl -X DELETE http://localhost:3000/tasks/1 -w "%{http_code}"
 
 ### Проект ★☆☆
 
-1. Добавьте эндпоинт `PATCH /tasks/:id/complete`, который устанавливает статус задачи в `"done"`. Верните обновлённую задачу в ответе:
+1. **Эндпоинт для завершения задачи.** Добавьте в API эндпоинт `PATCH /tasks/:id/complete`, который устанавливает статус задачи в `"done"`. Верните обновлённую задачу в ответе:
 
     ```haskell
-    handleComplete :: ConnectionPool -> ActionM ()
+    type CompleteAPI = "tasks" :> Capture "id" Int64 :> "complete" :> Patch '[JSON] TaskResponse
+
+    handleComplete :: ConnectionPool -> Int64 -> Handler TaskResponse
     ```
 
-2. Добавьте эндпоинт `GET /stats`, который возвращает статистику:
+    **Подсказка:** используйте `update key [TaskItemStatus =. "done"]`.
+
+2. **Эндпоинт статистики.** Добавьте `GET /stats`, который возвращает количество задач по статусам:
 
     ```json
     {
@@ -938,49 +1065,52 @@ $ curl -X DELETE http://localhost:3000/tasks/1 -w "%{http_code}"
     }
     ```
 
-    Используйте `count` из persistent для подсчёта.
+    Используйте `count` из persistent для подсчёта:
+
+    ```haskell
+    count :: [Filter record] -> ReaderT backend m Int
+    ```
 
 ### Проект ★★☆
 
-3. Реализуйте пагинацию в `GET /tasks`. Принимайте query-параметры `page` (по умолчанию 1) и `per_page` (по умолчанию 20). Используйте `SelectOpt` для `LimitTo` и `OffsetBy`:
+3. **Пагинация.** Реализуйте пагинацию в `GET /tasks`. Принимайте query-параметры `page` (по умолчанию 1) и `per_page` (по умолчанию 20):
 
     ```haskell
-    handleListPaginated :: ConnectionPool -> ActionM ()
+    type PaginatedAPI = "tasks"
+      :> QueryParam "page" Int
+      :> QueryParam "per_page" Int
+      :> Get '[JSON] [TaskResponse]
+
+    handleListPaginated :: ConnectionPool -> Maybe Int -> Maybe Int -> Handler [TaskResponse]
     ```
 
-    Верните в ответе мета-информацию: `{ "data": [...], "page": 1, "per_page": 20, "total": 42 }`.
+    Используйте `SelectOpt` для `LimitTo` и `OffsetBy`. Верните в ответе мета-информацию: `{ "data": [...], "page": 1, "per_page": 20, "total": 42 }`.
 
-4. Добавьте поиск по заголовку: `GET /tasks?search=молоко`. Используйте фильтр persistent с оператором `like` или реализуйте фильтрацию в Haskell через `filter` после получения всех записей.
+4. **Поиск по заголовку.** Добавьте query-параметр `search`:
+
+    ```haskell
+    type SearchAPI = "tasks" :> QueryParam "search" Text :> Get '[JSON] [TaskResponse]
+    ```
+
+    Для SQLite используйте `like` оператор или фильтруйте в Haskell через `filter` после получения записей.
 
 ### Практика ★☆☆
 
-5. Напишите функцию `validatePriority :: Text -> Either Text Text`, которая проверяет, что строка — допустимый приоритет (`"low"`, `"medium"`, `"high"`), и нормализует регистр (например, `"HIGH"` -> `"high"`):
+5. **Валидация приоритета.** Напишите функцию `validatePriority :: Text -> Either Text Text`, которая проверяет, что строка — допустимый приоритет (`"low"`, `"medium"`, `"high"`), и нормализует регистр (например, `"HIGH"` -> `"high"`):
 
     ```haskell
     validatePriority :: Text -> Either Text Text
     ```
 
-6. Напишите функцию `entityToResponse`, которая конвертирует `Entity TaskItem` в JSON-совместимый `TaskResponse`. Убедитесь, что `fromSqlKey` корректно конвертирует `TaskItemId` в `Int64`.
+6. **Конвертация Entity → TaskResponse.** Напишите функцию `entityToResponse`, которая конвертирует `Entity TaskItem` в JSON-совместимый `TaskResponse`. Убедитесь, что `fromSqlKey` корректно конвертирует `TaskItemId` в `Int64`.
 
 ### Практика ★★☆
 
-7. Реализуйте middleware для логирования запросов. Используйте `middleware` из Scotty и WAI:
-
-    ```haskell
-    import Network.Wai (Middleware)
-    import Network.Wai.Middleware.RequestLogger (logStdout)
-
-    -- В application:
-    middleware logStdout
-    ```
-
-    Добавьте также middleware для CORS (пакет `wai-cors`) и замерьте время обработки каждого запроса.
-
-8. Перенесите приоритет и статус из `Text` в собственные типы данных с инстансами `PersistField`:
+7. **Custom типы для приоритета и статуса.** Перенесите приоритет и статус из `Text` в собственные типы данных с инстансами `PersistField` и `ToJSON`/`FromJSON`:
 
     ```haskell
     data Priority = Low | Medium | High
-      deriving (Show, Eq, Ord)
+      deriving (Show, Eq, Ord, Generic)
 
     instance PersistField Priority where
       toPersistValue Low    = PersistText "low"
@@ -991,21 +1121,47 @@ $ curl -X DELETE http://localhost:3000/tasks/1 -w "%{http_code}"
       fromPersistValue (PersistText "medium") = Right Medium
       fromPersistValue (PersistText "high")   = Right High
       fromPersistValue x = Left $ "Invalid Priority: " <> Text.pack (show x)
+
+    instance PersistFieldSql Priority where
+      sqlType _ = SqlString
+
+    instance ToJSON Priority where
+      toJSON Low    = "low"
+      toJSON Medium = "medium"
+      toJSON High   = "high"
+
+    instance FromJSON Priority where
+      parseJSON = withText "Priority" $ \case
+        "low"    -> pure Low
+        "medium" -> pure Medium
+        "high"   -> pure High
+        x        -> fail ("Unknown priority: " <> Text.unpack x)
     ```
 
     Обновите модель persistent и все обработчики.
 
+8. **Генерация Swagger-документации.** Добавьте зависимость `servant-swagger` и создайте эндпоинт `GET /swagger.json`, который возвращает OpenAPI-спецификацию вашего API:
+
+    ```haskell
+    type APIWithSwagger = TaskAPI :<|> "swagger.json" :> Get '[JSON] Swagger
+
+    serverWithSwagger :: ConnectionPool -> Server APIWithSwagger
+    serverWithSwagger pool = taskServer pool :<|> pure swaggerDoc
+     where
+      swaggerDoc = toSwagger (Proxy :: Proxy TaskAPI)
+    ```
+
 ## Заключение
 
-Трекер задач прошёл путь от типов данных ([глава 2](chapter02.md)) через модульную структуру ([глава 15](chapter15.md)) и конкурентность ([глава 16](chapter16.md)) до работающего REST API с базой данных. По дороге мы освоили **Scotty** (маршруты, параметры, JSON, HTTP-статусы), **persistent** с **Template Haskell** (декларативные модели, автомиграции, типобезопасные CRUD-операции), **ReaderT-паттерн** с пулом соединений и обработку ошибок с валидацией. Результат — полноценный HTTP-сервер с SQLite.
+Трекер задач прошёл путь от типов данных ([глава 2](chapter02.md)) через модульную структуру ([глава 15](chapter15.md)) и конкурентность ([глава 16](chapter16.md)) до работающего REST API с базой данных. По дороге мы освоили **Servant** (типобезопасные API, автогенерация клиентов и документации), **persistent** с **Template Haskell** (декларативные модели, автомиграции, типобезопасные CRUD-операции), **ReaderT-паттерн** с пулом соединений и обработку ошибок с валидацией. Результат — полноценный HTTP-сервер с SQLite, где **типы гарантируют корректность API**.
 
 В [следующей главе](chapter18.md) мы перейдём к продвинутым темам — DSL и парсерам.
 
 ```admonish tip title="Для углубления"
 - **Haskell MOOC** — [haskell.mooc.fi](https://haskell.mooc.fi/), лекция 14: «Web Programming» — введение в веб-разработку на Haskell.
-- **Scotty** — [hackage.haskell.org/package/scotty](https://hackage.haskell.org/package/scotty) — документация фреймворка.
+- **Servant документация** — [docs.servant.dev](https://docs.servant.dev/) — официальное руководство, туториалы, cookbook.
 - **persistent** — [hackage.haskell.org/package/persistent](https://hackage.haskell.org/package/persistent) — документация ORM.
 - **Yesod book** — [yesodweb.com/book](https://www.yesodweb.com/book) — подробно о persistent и веб-разработке на Haskell.
-- **Servant** — [docs.servant.dev](https://docs.servant.dev/) — типобезопасный веб-фреймворк для продвинутых.
 - **Three Layer Haskell Cake** (Matt Parsons) — [www.parsonsmatt.org/2018/03/22/three_layer_haskell_cake.html](https://www.parsonsmatt.org/2018/03/22/three_layer_haskell_cake.html) — архитектура Haskell-приложений.
+- **Type-level Web APIs with Servant** (paper) — [www.andres-loeh.de/Servant/servant-wgp.pdf](https://www.andres-loeh.de/Servant/servant-wgp.pdf) — академическая статья о дизайне Servant.
 ```

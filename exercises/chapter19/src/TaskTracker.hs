@@ -3,6 +3,7 @@ module TaskTracker where
 import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Text (Text)
 
 -- | Идентификатор задачи.
 newtype TaskId = TaskId Int
@@ -18,7 +19,8 @@ data Status = Todo | InProgress | Done
 
 -- | Задача трекера.
 data Task = Task
-  { taskTitle :: String
+  { taskTitle :: Text
+  , taskDescription :: Text
   , taskPriority :: Priority
   , taskStatus :: Status
   }
@@ -27,10 +29,10 @@ data Task = Task
 -- | Примеры задач для тестирования.
 exampleTasks :: [Task]
 exampleTasks =
-  [ Task "Купить молоко" Low Todo
-  , Task "Написать отчёт" High InProgress
-  , Task "Полить цветы" Medium Done
-  , Task "Подготовить презентацию" High Todo
+  [ Task "Купить молоко" "" Low Todo
+  , Task "Написать отчёт" "" High InProgress
+  , Task "Полить цветы" "" Medium Done
+  , Task "Подготовить презентацию" "" High Todo
   ]
 
 -- =====================================================

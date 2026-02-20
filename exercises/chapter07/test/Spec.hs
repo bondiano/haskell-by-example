@@ -14,9 +14,9 @@ directLookup tid (TaskStore m) = Map.lookup tid m
 main :: IO ()
 main = hspec $ do
   -- Тестовые данные
-  let task1 = Task "Релиз" High Todo (Set.fromList ["dev"])
-      task2 = Task "Документация" Medium InProgress (Set.fromList ["docs"])
-      task3 = Task "Рефакторинг" Low Done (Set.fromList ["dev"])
+  let task1 = Task "Релиз" "Подготовить релиз v2.0" High Todo (Set.fromList ["dev"])
+      task2 = Task "Документация" "Обновить README" Medium InProgress (Set.fromList ["docs"])
+      task3 = Task "Рефакторинг" "Переписать парсер" Low Done (Set.fromList ["dev"])
       store =
         addTask 1 task1
           . addTask 2 task2

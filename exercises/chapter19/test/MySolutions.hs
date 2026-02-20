@@ -59,3 +59,61 @@ instance HasKey Task where
 instance HasKey (k, v) where
   type Key (k, v) = k
   getKey = undefined
+
+{- ────────────────────────────────────────────────────────────────
+   🚀 Challenging Exercises (★★★) — Продвинутые
+
+   Эти упражнения требуют глубокого понимания GADT и type families.
+   Они не обязательны для прохождения главы, но дадут вам реальный
+   опыт работы с advanced Haskell features.
+   ──────────────────────────────────────────────────────────────── -}
+
+{- | Challenge 1: Условные выражения с GADT (★★★)
+  Расширьте Expr новым конструктором:
+
+  IfThenElse :: Expr Bool -> Expr a -> Expr a -> Expr a
+
+  Условное выражение с проверкой типов на compile-time!
+  Условие должно быть Bool, оба branch'а — одного типа.
+
+  Затем обновите eval, чтобы обрабатывать IfThenElse.
+
+  Пример:
+  eval (IfThenElse (LitBool True) (LitInt 42) (LitInt 0)) == 42
+-}
+-- Добавьте конструктор в Expr и реализуйте eval для него
+
+{- | Challenge 2: Equality с ограничением Eq (★★★)
+  Расширьте Expr новым конструктором:
+
+  Equal :: Eq a => Expr a -> Expr a -> Expr Bool
+
+  Это СЛОЖНО: нужно добавить constraint Eq в GADT!
+  Equal сравнивает два выражения одного типа и возвращает Bool.
+
+  Обновите eval для обработки Equal.
+
+  Пример:
+  eval (Equal (LitInt 5) (Add (LitInt 2) (LitInt 3))) == True
+-}
+-- Добавьте конструктор Equal с constraint в Expr
+
+{- | Challenge 3: Let-биндинги с Environment (★★★)
+  Расширьте DSL локальными переменными:
+
+  Let :: String -> Expr a -> Expr b -> Expr b
+  Var :: String -> Expr a  -- переменная
+
+  Это ОЧЕНЬ СЛОЖНО: нужен Environment для хранения значений!
+
+  Подсказка: определите Environment как GADT или Data.Dynamic,
+  измените сигнатуру eval:
+
+  eval :: Env -> Expr a -> a
+
+  где Env хранит пары (String, значение).
+
+  Пример:
+  eval emptyEnv (Let "x" (LitInt 10) (Add (Var "x") (Var "x"))) == 20
+-}
+-- Это серьёзный вызов — именно так работают реальные DSL!

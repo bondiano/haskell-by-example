@@ -14,8 +14,8 @@ main = hspec $ do
         `shouldBe` Right
           ( TaskStore $
               Map.fromList
-                [ (TaskId 2, Task "Написать отчёт" "" High InProgress)
-                , (TaskId 3, Task "Полить цветы" "" Low Done)
+                [ (TaskId 2, Task "Написать отчёт" High InProgress)
+                , (TaskId 3, Task "Полить цветы" Low Done)
                 ]
           )
 
@@ -37,7 +37,7 @@ main = hspec $ do
       case updateTitle (TaskId 1) "Купить хлеб" exampleStore of
         Right store ->
           lookupTask (TaskId 1) store
-            `shouldBe` Just (Task "Купить хлеб" "" Medium Todo)
+            `shouldBe` Just (Task "Купить хлеб" Medium Todo)
         Left err -> expectationFailure $ "Ожидали Right, получили: " ++ show err
 
     it "ошибка при пустом названии" $
@@ -95,29 +95,29 @@ main = hspec $ do
       chainOperations [] exampleStore `shouldBe` Right exampleStore
 
     it "одна успешная операция" $
-      let op = Right . addTask (TaskId 4) (Task "Новая" "" Low Todo)
+      let op = Right . addTask (TaskId 4) (Task "Новая" Low Todo)
        in case chainOperations [op] emptyStore of
             Right store ->
               lookupTask (TaskId 4) store
-                `shouldBe` Just (Task "Новая" "" Low Todo)
+                `shouldBe` Just (Task "Новая" Low Todo)
             Left err -> expectationFailure $ "Ожидали Right, получили: " ++ show err
 
     it "несколько операций применяются последовательно" $
-      let op1 = Right . addTask (TaskId 1) (Task "Первая" "" Low Todo)
-          op2 = Right . addTask (TaskId 2) (Task "Вторая" "" High Todo)
+      let op1 = Right . addTask (TaskId 1) (Task "Первая" Low Todo)
+          op2 = Right . addTask (TaskId 2) (Task "Вторая" High Todo)
        in case chainOperations [op1, op2] emptyStore of
             Right (TaskStore m) -> Map.size m `shouldBe` 2
             Left err -> expectationFailure $ "Ожидали Right, получили: " ++ show err
 
     it "останавливается на первой ошибке" $
-      let op1 = Right . addTask (TaskId 1) (Task "Первая" "" Low Todo)
+      let op1 = Right . addTask (TaskId 1) (Task "Первая" Low Todo)
           op2 _ = Left (InvalidInput "Ошибка!")
-          op3 = Right . addTask (TaskId 3) (Task "Третья" "" High Todo)
+          op3 = Right . addTask (TaskId 3) (Task "Третья" High Todo)
        in chainOperations [op1, op2, op3] emptyStore
             `shouldBe` Left (InvalidInput "Ошибка!")
 
     it "ошибка в первой операции — всё останавливается" $
       let op1 _ = Left (TaskNotFound (TaskId 42))
-          op2 = Right . addTask (TaskId 1) (Task "Не должна добавиться" "" Low Todo)
+          op2 = Right . addTask (TaskId 1) (Task "Не должна добавиться" Low Todo)
        in chainOperations [op1, op2] emptyStore
             `shouldBe` Left (TaskNotFound (TaskId 42))

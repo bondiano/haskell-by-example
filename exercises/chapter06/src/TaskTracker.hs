@@ -25,11 +25,16 @@ data Status = Todo | InProgress | Done
 -- | Задача трекера.
 data Task = Task
   { taskTitle :: Text
+  , taskDescription :: Text
   , taskPriority :: Priority
   , taskStatus :: Status
   , taskTags :: Set Tag
   }
   deriving (Show, Eq)
+
+-- | Создать задачу с пустым описанием (для удобства в упражнениях).
+mkTask :: Text -> Priority -> Status -> Set Tag -> Task
+mkTask title priority status tags = Task title "" priority status tags
 
 -- | Хранилище задач.
 newtype TaskStore = TaskStore {unTaskStore :: Map TaskId Task}
